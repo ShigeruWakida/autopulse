@@ -188,6 +188,7 @@ Done → In Progress / Blocked（--reason 必須）
 | `%LOCALAPPDATA%\AutoPulse\queue\` | 未送信イベント（送信後に削除） |
 | `%LOCALAPPDATA%\AutoPulse\queue\failed\` | 恒久的に失敗したイベント（`sync --retry-failed` で戻せる） |
 | `%LOCALAPPDATA%\AutoPulse\backups\` | onboard が書き換える前のファイル |
+| `%LOCALAPPDATA%\AutoPulse\hook.log` | Hook の実行記録（1 回 1 行。イベント・所要時間・結果） |
 
 イベントには会話の本文を入れません。`--summary` などの自由文はトークン・パスワードらしき文字列を伏せてから保存します。
 `AUTOPULSE_HOME` / `AUTOPULSE_CONFIG` 環境変数で場所を変えられます。
@@ -212,6 +213,7 @@ CI（`.github/workflows/test.yml`）は単体テストだけを実行し、Proje
 | 管理欄が更新されない（競合） | 管理欄の中を手で編集すると AutoPulse は更新を止めます。管理欄のブロックを削除すると次回作り直されます |
 | 出力が文字化けする | パイプ時は UTF-8 で出力します。PowerShell 側は `[Console]::OutputEncoding = [Text.Encoding]::UTF8` |
 | Codex の Hook が動かない | Codex で `/hooks` を開き、信頼されているか確認。プロジェクトの `.codex/` が信頼済みか確認 |
+| Hook が `Failed` と表示される | `%LOCALAPPDATA%\AutoPulse\hook.log` を確認。記録がなければ Hook 自体が起動していない（PATH・信頼設定）。記録があれば AutoPulse は正常終了しており、出力形式の問題 |
 | `autopulse` が Hook から見つからない | `uv tool install --editable` で導入し、`%USERPROFILE%\.local\bin` が PATH にあるか確認 |
 
 ## 開発

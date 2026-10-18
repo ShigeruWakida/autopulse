@@ -199,7 +199,10 @@ class HookTest(unittest.TestCase):
             snap(2, fields={"Status": "Done"}),
         ])
         with mock.patch.object(hooks, "origin_of", return_value="me/repo"):
-            text = hooks.run("session-start", "claude", json.dumps({"cwd": self.tmp.name}), fake)
+            out = hooks.run("session-start", "claude", json.dumps({"cwd": self.tmp.name}), fake)
+        output = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "SessionStart")
+        text = output["additionalContext"]
         self.assertIn("#1 [In Progress] 基板", text)
         self.assertIn("次: 配線を確認", text)
         self.assertLess(text.index("#1"), text.index("#3"))
