@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from auto_pulse import __version__, body, bootstrap, doctor, hooks, onboard, reconcile
+from auto_pulse import __version__, body, bootstrap, doctor, hooks, onboard, reconcile, records
 from auto_pulse import config as config_mod
 from auto_pulse.config import AGENTS
 from auto_pulse.engine import Engine, process
@@ -343,6 +343,68 @@ def cmd_install_hooks(ctx: Ctx) -> int:
     return ExitCode.OK
 
 
+def _full_repo(cfg, repo: str) -> str:
+    """`ScanPilot` -> `<owner>/ScanPilot` using the configured owner."""
+    return repo if "/" in repo else f"{cfg.owner}/{repo}"
+
+
+def cmd_decision_template(ctx: Ctx) -> int:
+    a = ctx.args
+    name = (a.repo or "（プロジェクト名）").split("/")[-1]
+    text = records.template(name)
+    ctx.out(text.rstrip("\n"), {"template": text})
+    return ExitCode.OK
+
+
+def cmd_import_decisions(ctx: Ctx) -> int:
+    a = ctx.args
+    cfg = ctx.config()
+    repo = _full_repo(cfg, a.repo)
+    if not cfg.allows(repo):
+        raise PolicyRefused(f"{repo} は allowlist（config の [repos] allow）にありません。書き込みません")
+    root = Path(a.path).resolve() if a.path else Path.cwd()
+    origin = origin_of(str(root))
+    if not origin or origin.lower() != repo.lower():
+        raise PolicyRefused(f"{root} の origin（{origin}）が {repo} と一致しません。--path でクローンを指定してください")
+    text = Path(a.file).read_bytes().decode("utf-8-sig")
+    record = records.parse(text)
+    plan = records.build(ctx.client, cfg, repo, root, record)
+
+    lines = [f"{repo}: {record.title}（記録 {plan.record_path}" + ("、取り込み済み" if plan.already_imported else "") + "）"]
+    for i, d in enumerate(record.decisions):
+        new = any(i == j for j, _ in plan.new_decision_entries)
+        target = f"#{d.issue}" if d.issue else "Issue なし"
+        lines.append(f"  [決定] {d.title}（{target}）: DECISIONS.md に{'追記' if new else '記録済み'}"
+                     + ("、Issue に ChatGPT の記録を残す" if any(e.issue == d.issue for e in plan.notes) and d.issue else ""))
+    for t in plan.new_tasks:
+        lines.append(f"  [新規] Issue「{t.title}」{t.priority} {t.category} 完了条件 {len(t.criteria)} 件 → {cfg.label('Backlog')}")
+    for t in plan.existing_tasks:
+        lines.append(f"  [既存] Issue「{t.title}」は同じタイトルがあるため作りません")
+    for o in record.open_items:
+        lines.append(f"  [未決] {o.title}: {o.state or '-'}（記録に残すだけで Issue は作りません）")
+    lines += [f"  注意: {w}" for w in plan.warnings]
+    data = {
+        "repo": repo,
+        "record": plan.record_path,
+        "already_imported": plan.already_imported,
+        "decisions": [{"title": d.title, "issue": d.issue, "new": any(i == j for j, _ in plan.new_decision_entries)} for i, d in enumerate(record.decisions)],
+        "new_tasks": [t.title for t in plan.new_tasks],
+        "existing_tasks": [t.title for t in plan.existing_tasks],
+        "open": [o.title for o in record.open_items],
+        "warnings": plan.warnings,
+        "applied": False,
+    }
+    if not a.apply:
+        lines.append("（dry-run: 何も変更していません。--apply で実行）")
+        ctx.out(lines, data)
+        return ExitCode.OK
+    created = records.apply(ctx.client, cfg, plan, ctx.spool, lambda: Engine(ctx.client, cfg))
+    lines.append(f"反映しました。作成した Issue: {', '.join(created) or 'なし'}")
+    lines.append("docs/ の変更はコミットしていません。内容を確認してコミットしてください。決定の Issue を完了にするのは人です。")
+    ctx.out(lines, data | {"applied": True, "created": created})
+    return ExitCode.OK
+
+
 def cmd_hook(ctx: Ctx) -> int:
     try:
         stdin_text = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
@@ -425,6 +487,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--update-workflow", action="store_true", help="既存の .ai/workflow.md をテンプレートで更新（バックアップあり）")
     s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
 
+    s = sub.add_parser("decision-template", parents=[common], help="ChatGPT に渡す決定記録の書式を表示")
+    s.add_argument("--repo", help="プロジェクト名（見出しに入る）")
+
+    s = sub.add_parser("import-decisions", parents=[common], help="ChatGPT の決定記録を取り込む（既定は dry-run）")
+    s.add_argument("--repo", required=True, help="owner/name または name（owner は設定から補う）")
+    s.add_argument("--file", required=True, help="決定記録の Markdown ファイル")
+    s.add_argument("--path", help="ローカルのクローン（省略時はカレントディレクトリ）")
+    s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
+    s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
+
     s = sub.add_parser("install-hooks", parents=[common], help="Codex の Hook をこの PC のユーザー設定に導入（既定は dry-run）")
     s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
     s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
@@ -441,6 +513,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("reconcile", cmd_reconcile),
         ("onboard", cmd_onboard),
         ("install-hooks", cmd_install_hooks),
+        ("decision-template", cmd_decision_template),
+        ("import-decisions", cmd_import_decisions),
         ("hook", cmd_hook),
     ]:
         sub.choices[name].set_defaults(handler=handler)

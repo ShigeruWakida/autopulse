@@ -266,6 +266,16 @@ class GhClient:
     def edit_body(self, repo: str, number: int, body: str) -> None:
         self.gh("issue", "edit", str(number), "--repo", repo, "--body-file", "-", input=body)
 
+    def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> str:
+        args = ["issue", "create", "--repo", repo, "--title", title, "--body-file", "-"]
+        for label in labels:
+            args += ["--label", label]
+        return self.gh(*args, input=body).strip().splitlines()[-1]
+
+    def issue_titles(self, repo: str) -> dict[str, str]:
+        out = self.gh("issue", "list", "--repo", repo, "--state", "all", "--limit", "1000", "--json", "title,url")
+        return {i["title"]: i["url"] for i in json.loads(out or "[]")}
+
     def close_issue(self, repo: str, number: int) -> None:
         self.gh("issue", "close", str(number), "--repo", repo, "--reason", "completed")
 

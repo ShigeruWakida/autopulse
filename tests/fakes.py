@@ -3,7 +3,7 @@
 import copy
 
 from auto_pulse.config import STATUSES, Config
-from auto_pulse.errors import TransientError
+from auto_pulse.errors import GhError, TransientError
 from auto_pulse.github import EVENT_MARKER, IssueSnapshot
 
 AC_BODY = """### Summary
@@ -52,6 +52,8 @@ class FakeClient:
     def get_issue(self, repo, number, project_owner, project_number):
         if self.on_read:
             self.on_read((repo, number))
+        if (repo, number) not in self.issues:
+            raise GhError(f"Could not resolve to an Issue with the number of {number}.")
         issue = self.issues[(repo, number)]
         fields = self.items.get(issue["url"])
         return IssueSnapshot(
@@ -90,6 +92,16 @@ class FakeClient:
     def add_comment(self, repo, number, body):
         self._write("comment", number)
         self.comments[(repo, number)].append(body)
+
+    def create_issue(self, repo, title, body, labels):
+        number = max([n for (r, n) in self.issues if r == repo] or [0]) + 1
+        self._write("create_issue", title)
+        url = self.add_issue(number, body=body, repo=repo)
+        self.issues[(repo, number)]["title"] = title
+        return url
+
+    def issue_titles(self, repo):
+        return {i["title"]: i["url"] for (r, _), i in self.issues.items() if r == repo}
 
     def close_issue(self, repo, number):
         self._write("close", number)

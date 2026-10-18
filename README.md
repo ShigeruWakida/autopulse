@@ -196,6 +196,31 @@ autopulse reconcile --apply     # 安全な修正（ai-managed Issue の Project
 | 5 | 人の編集と競合し、現行値を保持した |
 | 6 | 設定・認証・権限の問題（`autopulse doctor` を参照） |
 
+## ChatGPT で検討しているプロジェクト
+
+ChatGPT は GitHub に書き込まず（仕様 §9）、検討で決まったことだけを「決定記録」として持ち帰ります。
+
+```powershell
+# 1. 書式を表示して、ChatGPT の Project の指示（Instructions）に貼る
+autopulse decision-template --repo ScanPilot
+
+# 2. 検討の区切りで ChatGPT が出した決定記録をファイルに保存し、取り込む内容を確認（dry-run）
+autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot
+
+# 3. 反映する
+autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot --apply
+```
+
+| 決定記録の節 | 反映先 |
+| --- | --- |
+| 決定 | `docs/DECISIONS.md` に追記。Issue 番号があればその Issue に ChatGPT の記録としてコメント（AI Agent・Last Activity も更新）。**Status は変えない**（完了にするのは人） |
+| 新しくやること | Issue を作り、Projects に 1.未着手 で追加（同じタイトルがあれば作らない） |
+| 未決 | Issue にはしない。記録ファイルに残す |
+| 記録そのもの | `docs/records/<日付>-<ハッシュ>.md` に保存 |
+
+同じ記録を二度取り込んでも、追記・コメント・Issue は重複しません。`docs/` の変更はコミットしないので、確認してからコミットします。
+`--repo` は `owner/name` のほか、設定の owner を補って `ScanPilot` だけでも指定できます。
+
 ## 新しいリポジトリを加える手順
 
 1. GitHub にリポジトリを作り、ローカルにクローンする
