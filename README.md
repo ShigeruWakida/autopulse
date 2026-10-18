@@ -92,12 +92,25 @@ autopulse onboard --repo <login>/<repo> --path C:\path\to\clone --apply
 | `.ai/workflow.md` | 変更しない（`--update-workflow` で更新） |
 | `.github/ISSUE_TEMPLATE/ai-task.yml`, `docs/DECISIONS.md`, `docs/STATUS.md` | 変更しない |
 | `.claude/settings.json`（Claude Code の Hook） | 既存の設定を残して AutoPulse の Hook を追加 |
-| `.codex/hooks.json`（Codex の Hook） | 同上 |
+| `.codex/hooks.json`（Codex の Hook） | 同上。ただし `~/.codex/hooks.json` に AutoPulse の Hook があれば作らない（二重実行を防ぐ） |
 
 - 上書き・追記する前のファイルは `%LOCALAPPDATA%\AutoPulse\backups\` にコピーされます（リポジトリには入りません）
 - GitHub に `ai-managed` ラベルがなければ作成し、リポジトリを allowlist に追加します
 - **コミットはしません**。差分を確認してから自分でコミットしてください
 - Codex の Hook は信頼の確認が必要です。Codex で `/hooks` を開き、AutoPulse の Hook を確認して信頼してください
+
+### Codex の Hook を PC ごとに入れる（推奨）
+
+`.codex/` を PC 固有として git から除外しているリポジトリでは、リポジトリ側の `.codex/hooks.json` は他の PC に届きません。
+その場合は各 PC で一度だけ、ユーザー設定（`~/.codex/hooks.json`）に入れます。allowlist にないリポジトリでは何もしないので、
+すべてのリポジトリで共通に使えます。
+
+```powershell
+autopulse install-hooks           # 差分を表示（dry-run）
+autopulse install-hooks --apply   # 既存の Hook を残して追加。書き換え前の内容はバックアップ
+```
+
+導入後、Codex で `/hooks` を開いて信頼してください。
 
 ### Hook の動き
 
@@ -177,7 +190,7 @@ Done → In Progress / Blocked（--reason 必須）
 1. GitHub にリポジトリを作り、ローカルにクローンする
 2. `autopulse onboard --repo <login>/<repo> --path <clone>` で差分を確認
 3. `--apply` で導入し、差分を確認してコミット・push
-4. Codex を使う場合は `/hooks` で Hook を信頼する
+4. Codex を使う場合は、その PC でまだなら `autopulse install-hooks --apply` を実行し、`/hooks` で Hook を信頼する
 5. `autopulse doctor` で `repo:<login>/<repo>` が OK になることを確認
 
 ## データの置き場所
