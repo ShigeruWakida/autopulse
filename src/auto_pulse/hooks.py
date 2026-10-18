@@ -19,6 +19,7 @@ from auto_pulse.spool import Spool, default_spool
 
 SHOWN_STATUSES = ("In Progress", "Blocked", "Review", "Ready")
 MAX_ISSUES = 10
+HOOK_BUDGET = {"stop": 35.0, "session-end": 10.0}  # seconds before no new event is started
 
 
 def _payload(stdin_text: str) -> dict:
@@ -104,7 +105,9 @@ def run(event: str, agent: str | None, stdin_text: str, client: GhClient) -> str
             )
         # force: events queued inside the Codex sandbox got a backoff from a failure that was
         # never a real GitHub attempt (no keyring there). Stop fires at most once per turn.
-        results = process(Engine(client, cfg), spool, force=True)
+        # One event takes up to ~15 s of gh calls; stay inside the hook timeouts
+        # (Stop 60 s, SessionEnd 30 s in the onboard templates).
+        results = process(Engine(client, cfg), spool, force=True, budget=HOOK_BUDGET.get(event, 10))
         outcome = "sync " + ",".join(r.status for r in results)
         return ""
     except Exception as exc:  # noqa: BLE001 - hooks must never break the session

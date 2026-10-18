@@ -104,6 +104,15 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(results[0].status, "conflict")
         self.assertIn("競合", self.fake.comments[("me/repo", 1)][-1])
 
+    def test_budget_leaves_the_rest_queued(self):
+        self.fake.add_issue(2)
+        self.spool.put(Event(type="start", repo="me/repo", issue=1, agent="claude"))
+        self.spool.put(Event(type="start", repo="me/repo", issue=2, agent="claude"))
+        results = process(self.engine, self.spool, budget=-1)  # already over budget
+        self.assertEqual([r.status for r in results], ["waiting", "waiting"])
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(len(self.spool.pending()), 2)
+
     def test_permanent_error_does_not_block_other_issues(self):
         self.fake.add_issue(2)
         self.fake.fail_next = [GhError("HTTP 422")]

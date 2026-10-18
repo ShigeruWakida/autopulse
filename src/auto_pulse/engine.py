@@ -1,5 +1,6 @@
 """Apply planned changes to GitHub and drain the local queue."""
 
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -85,14 +86,28 @@ class Outcome:
     code: int | None = None  # exit code of the error that failed the event
 
 
-def process(engine: Engine, spool: Spool, only: tuple[str, int] | None = None, force: bool = False) -> list[Outcome]:
-    """Send pending events oldest-first. Events of one issue are kept in order."""
+def process(
+    engine: Engine,
+    spool: Spool,
+    only: tuple[str, int] | None = None,
+    force: bool = False,
+    budget: float | None = None,
+) -> list[Outcome]:
+    """Send pending events oldest-first. Events of one issue are kept in order.
+
+    budget: seconds after which no new event is started (hooks have a hard timeout);
+    the rest stays queued for the next run.
+    """
     now = datetime.now().astimezone()
+    started = time.monotonic()
     held: set[tuple[str, int]] = set()
     results = []
     for event in spool.pending():
         key = (event.repo.lower(), event.issue)
         if only and key != (only[0].lower(), only[1]):
+            continue
+        if budget is not None and time.monotonic() - started > budget:
+            results.append(Outcome(event, "waiting", error="時間の上限に達したため次回送信"))
             continue
         if key in held:
             results.append(Outcome(event, "waiting", error="同じ Issue の先行イベントが未送信"))
