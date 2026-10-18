@@ -46,7 +46,7 @@ class ParseTest(unittest.TestCase):
     def test_parses_all_sections(self):
         r = records.parse(RECORD)
         self.assertEqual(r.date, "2026-10-19")
-        self.assertEqual([(d.title, d.issue) for d in r.decisions], [("アプリの実装言語は Flutter", 1), ("シールは大型優先", None)])
+        self.assertEqual([(d.title, d.issues) for d in r.decisions], [("アプリの実装言語は Flutter", [1]), ("シールは大型優先", [])])
         self.assertEqual(r.decisions[1].date, "2026-10-19", "falls back to the record date")
         task = r.tasks[0]
         self.assertEqual((task.priority, task.category), ("P1", "Software"))
@@ -97,7 +97,8 @@ class ImportTest(unittest.TestCase):
 
         comments = self.fake.comments[("me/repo", 1)]
         self.assertEqual(len(comments), 1)
-        self.assertIn("ChatGPT で決定: Flutter / Dart を正式採用する", comments[0])
+        self.assertIn("ChatGPT で決定「アプリの実装言語は Flutter」: Flutter / Dart を正式採用する", comments[0])
+        self.assertNotIn("Next Action", self.fake.items[self.fake.issues[("me/repo", 1)]["url"]], "a decision does not rewrite Next Action")
         url1 = self.fake.issues[("me/repo", 1)]["url"]
         self.assertEqual(self.fake.items[url1]["Status"], "Ready", "status is left to a person")
         self.assertEqual(self.fake.items[url1]["AI Agent"], "ChatGPT")
@@ -115,6 +116,40 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(created2, [])
         self.assertEqual(len(self.fake.comments[("me/repo", 1)]), 1, "no duplicate comment")
         self.assertEqual((self.root / "docs" / "DECISIONS.md").read_text(encoding="utf-8"), decisions)
+
+    def test_multiple_issues_escaped_bullets_and_restated_tasks(self):
+        self.fake.add_issue(5, fields={"Status": "Backlog"})
+        text = r"""# 決定記録 repo 2026-10-19
+
+## 決定
+
+### 保存先
+
+- Issue: #1、#5
+- 内容: UNC パスを登録する
+
+## 新しくやること
+
+### 既存の言い換え
+- 優先度: P0
+- 概要: Issue #5。同じ作業
+- 完了条件:
+  - 条件A
+
+## 未決
+
+### 論点
+
+\- 状態: Issue #5。検討中
+"""
+        record = records.parse(text)
+        self.assertEqual(record.decisions[0].issues, [1, 5])
+        self.assertEqual(record.tasks[0].criteria, ["条件A"], "plain bullets count as criteria")
+        self.assertEqual(record.open_items[0].state, "Issue #5。検討中")
+        plan = records.build(self.fake, self.cfg, "me/repo", self.root, record)
+        self.assertEqual(sorted(e.issue for e in plan.notes), [1, 5])
+        self.assertEqual(plan.new_tasks, [])
+        self.assertEqual([refs for _, refs in plan.referenced_tasks], [[5]])
 
     def test_unknown_issue_is_a_warning_not_a_failure(self):
         text = RECORD.replace("- Issue: #1", "- Issue: #99")

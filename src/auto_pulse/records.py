@@ -36,7 +36,7 @@ class Decision:
     content: str = ""
     reason: str = ""
     date: str = ""
-    issue: int | None = None
+    issues: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -76,9 +76,13 @@ def template(repo_name: str) -> str:
     return TEMPLATE.read_bytes().decode("utf-8").replace("\r\n", "\n").replace("{{REPO_NAME}}", repo_name)
 
 
-def _issue_number(value: str) -> int | None:
-    m = re.search(r"#?(\d+)", value)
-    return int(m.group(1)) if m and value.strip().lower() not in _NONE else None
+def _issue_numbers(value: str) -> list[int]:
+    if value.strip().lower() in _NONE:
+        return []
+    return [int(n) for n in re.findall(r"#?(\d+)", value)]
+
+
+_ISSUE_REF = re.compile(r"(?:Issue\s*)?#(\d+)", re.IGNORECASE)
 
 
 def parse(text: str) -> Record:
@@ -92,6 +96,7 @@ def parse(text: str) -> Record:
 
     section, current, list_key = None, None, None
     for line in lines:
+        line = re.sub(r"^(\s*)\\-", r"\1-", line)  # "\- 状態:" (markdown-escaped bullet)
         if line.startswith("## "):
             section = SECTIONS.get(line[3:].strip().lower()) or SECTIONS.get(line[3:].strip())
             current, list_key = None, None
@@ -118,7 +123,7 @@ def parse(text: str) -> Record:
         list_key = None
         if isinstance(current, Decision):
             if key.lower() == "issue":
-                current.issue = _issue_number(value)
+                current.issues = _issue_numbers(value)
             elif key == "内容":
                 current.content = value
             elif key == "理由":
@@ -179,21 +184,22 @@ def decisions_entry(record: Record, index: int, decision: Decision, record_path:
     ]
     if decision.reason:
         lines.append(f"- 理由: {decision.reason}")
-    if decision.issue:
-        lines.append(f"- 関連: #{decision.issue}")
+    if decision.issues:
+        lines.append("- 関連: " + "、".join(f"#{n}" for n in decision.issues))
     lines.append(f"- 出典: ChatGPT の決定記録（{record_path}）")
     return "\n".join(lines) + "\n"
 
 
-def note_event(record: Record, index: int, decision: Decision, repo: str) -> Event:
-    summary = f"ChatGPT で決定: {decision.content}" + (f"（理由: {decision.reason}）" if decision.reason else "")
+def note_event(record: Record, index: int, decision: Decision, repo: str, issue: int) -> Event:
+    # Next Action is deliberately left alone: a decision rarely finishes the issue's work.
+    summary = f"ChatGPT で決定「{decision.title}」: {decision.content}" + (f"（理由: {decision.reason}）" if decision.reason else "")
     return Event(
-        id=str(uuid.uuid5(EVENT_NAMESPACE, f"{repo.lower()}:{record.digest}:{index}")),
+        id=str(uuid.uuid5(EVENT_NAMESPACE, f"{repo.lower()}:{record.digest}:{index}:{issue}")),
         type="note",
         repo=repo,
-        issue=decision.issue,
+        issue=issue,
         agent="chatgpt",
-        data={"summary": summary, "next": "決定内容を確認し、完了条件にチェックを入れて完了にする"},
+        data={"summary": summary},
     )
 
 
@@ -206,8 +212,10 @@ class ImportPlan:
     already_imported: bool = False
     new_decision_entries: list[tuple[int, Decision]] = field(default_factory=list)
     notes: list[Event] = field(default_factory=list)
+    note_decision: list[int] = field(default_factory=list)  # decision index of each note
     new_tasks: list[Task] = field(default_factory=list)
     existing_tasks: list[Task] = field(default_factory=list)
+    referenced_tasks: list[tuple[Task, list[int]]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -221,17 +229,25 @@ def build(client: GhClient, cfg: Config, repo: str, root: Path, record: Record) 
     for i, decision in enumerate(record.decisions):
         if f"autopulse:record={record.digest}:{i} " not in existing:
             plan.new_decision_entries.append((i, decision))
-        if decision.issue:
+        for number in decision.issues:
             try:
-                client.get_issue(repo, decision.issue, cfg.owner, cfg.project_number)
+                client.get_issue(repo, number, cfg.owner, cfg.project_number)
             except AutoPulseError as exc:
-                plan.warnings.append(f"#{decision.issue} を確認できないためコメントしません: {exc}")
+                plan.warnings.append(f"#{number} を確認できないためコメントしません: {exc}")
                 continue
-            plan.notes.append(note_event(record, i, decision, repo))
+            plan.notes.append(note_event(record, i, decision, repo, number))
+            plan.note_decision.append(i)
 
     titles = client.issue_titles(repo) if record.tasks else {}
+    numbers = {int(url.rsplit("/", 1)[1]) for url in titles.values()}
     for task in record.tasks:
-        (plan.existing_tasks if task.title in titles else plan.new_tasks).append(task)
+        refs = sorted({int(n) for n in _ISSUE_REF.findall(f"{task.title} {task.summary}")} & numbers)
+        if refs:
+            plan.referenced_tasks.append((task, refs))  # restates work an issue already tracks
+        elif task.title in titles:
+            plan.existing_tasks.append(task)
+        else:
+            plan.new_tasks.append(task)
     return plan
 
 

@@ -373,13 +373,16 @@ def cmd_import_decisions(ctx: Ctx) -> int:
     lines = [f"{repo}: {record.title}（記録 {plan.record_path}" + ("、取り込み済み" if plan.already_imported else "") + "）"]
     for i, d in enumerate(record.decisions):
         new = any(i == j for j, _ in plan.new_decision_entries)
-        target = f"#{d.issue}" if d.issue else "Issue なし"
+        target = "、".join(f"#{n}" for n in d.issues) or "Issue なし"
+        noted = [e.issue for e, j in zip(plan.notes, plan.note_decision) if j == i]
         lines.append(f"  [決定] {d.title}（{target}）: DECISIONS.md に{'追記' if new else '記録済み'}"
-                     + ("、Issue に ChatGPT の記録を残す" if any(e.issue == d.issue for e in plan.notes) and d.issue else ""))
+                     + (f"、{'・'.join(f'#{n}' for n in noted)} に ChatGPT の記録を残す" if noted else ""))
     for t in plan.new_tasks:
         lines.append(f"  [新規] Issue「{t.title}」{t.priority} {t.category} 完了条件 {len(t.criteria)} 件 → {cfg.label('Backlog')}")
     for t in plan.existing_tasks:
         lines.append(f"  [既存] Issue「{t.title}」は同じタイトルがあるため作りません")
+    for t, refs in plan.referenced_tasks:
+        lines.append(f"  [既存参照] 「{t.title}」は {'、'.join(f'#{n}' for n in refs)} の作業なので作りません（内容の違いは Issue を手で直す）")
     for o in record.open_items:
         lines.append(f"  [未決] {o.title}: {o.state or '-'}（記録に残すだけで Issue は作りません）")
     lines += [f"  注意: {w}" for w in plan.warnings]
@@ -387,7 +390,8 @@ def cmd_import_decisions(ctx: Ctx) -> int:
         "repo": repo,
         "record": plan.record_path,
         "already_imported": plan.already_imported,
-        "decisions": [{"title": d.title, "issue": d.issue, "new": any(i == j for j, _ in plan.new_decision_entries)} for i, d in enumerate(record.decisions)],
+        "decisions": [{"title": d.title, "issues": d.issues, "new": any(i == j for j, _ in plan.new_decision_entries)} for i, d in enumerate(record.decisions)],
+        "referenced_tasks": [{"title": t.title, "issues": refs} for t, refs in plan.referenced_tasks],
         "new_tasks": [t.title for t in plan.new_tasks],
         "existing_tasks": [t.title for t in plan.existing_tasks],
         "open": [o.title for o in record.open_items],
