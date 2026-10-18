@@ -142,6 +142,10 @@ def build_plan(
     if not fields.get(F("priority")):
         ops.append(Op("set_field", F("priority"), DEFAULT_PRIORITY))
 
+    repo_name = event.repo.split("/")[-1]
+    if fields.get(F("repo_name")) != repo_name:
+        ops.append(Op("set_field", F("repo_name"), repo_name))
+
     activity = fields.get(F("last_activity"))
     if event.type != "start":  # starting a session alone is not verified work
         if not activity or activity < event.local_date:

@@ -102,7 +102,7 @@ def cmd_init(ctx: Ctx) -> int:
             "",
             f"初期化しました: Project #{cfg.project_number} / 設定 {config_mod.config_path()}",
             "表の列は自動では増えません（GitHub に View を変更する API がないため）。Project の画面で見出し右端の「+」から",
-            "Priority / Next Action / Last Activity / AI Agent / Category を表示して Save してください。",
+            "Repo / Priority / Next Action / Last Activity / AI Agent / Category を表示して Save してください。",
         ],
         data,
     )

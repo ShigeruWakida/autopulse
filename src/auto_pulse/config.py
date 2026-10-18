@@ -27,6 +27,8 @@ FIELD_SPECS: dict[str, tuple[str, str, list[str]]] = {
     "next_action": ("Next Action", "TEXT", []),
     "ai_agent": ("AI Agent", "SINGLE_SELECT", list(AGENTS.values())),
     "effort": ("Effort", "NUMBER", []),
+    # The built-in Repository column always shows owner/name; this one holds the name only.
+    "repo_name": ("Repo", "TEXT", []),
 }
 DEFAULT_PRIORITY = "P2"
 DEFAULT_HUMAN_APPROVAL_PATTERNS = ["[human]", "[人間承認]", "人間承認"]

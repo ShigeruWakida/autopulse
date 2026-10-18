@@ -16,7 +16,7 @@ from tests.fakes import make_config
 
 
 def item(number, status=None, state="OPEN", issue_body="", repo="me/repo", **fields):
-    values = {"Status": status, **fields} if status else dict(fields)
+    values = {"Repo": repo.split("/")[-1], **({"Status": status} if status else {}), **fields}
     return {
         "id": f"PVTI_{number}", "type": "Issue", "repo": repo, "number": number, "title": f"t{number}",
         "url": f"https://github.com/{repo}/issues/{number}", "state": state, "body": issue_body, "fields": values,
@@ -28,6 +28,7 @@ class BoardFake:
         self.items = items
         self.open = list(open_issues)
         self.added = []
+        self.edited = []
         self.labels = set()
         self.created_labels = []
 
@@ -39,6 +40,9 @@ class BoardFake:
 
     def add_item(self, owner, number, url):
         self.added.append(url)
+
+    def set_field(self, owner, number, url, field, value):
+        self.edited.append((url, field, value))
 
     def label_exists(self, repo, name):
         return name in self.labels
@@ -101,6 +105,13 @@ class ReconcileTest(unittest.TestCase):
         fake = BoardFake([item(1, "Blocked", issue_body=form), item(2, "Blocked", issue_body=empty)])
         findings = reconcile.run(fake, make_config(), self.spool, [], today=date(2026, 10, 18))
         self.assertEqual([(f.kind, f.number) for f in findings], [("blocked-without-reason", 2)])
+
+    def test_repo_name_column_is_backfilled(self):
+        fake = BoardFake([item(1, "Backlog", Repo=None)])
+        findings = reconcile.run(fake, make_config(), self.spool, [], today=date(2026, 10, 18))
+        self.assertEqual([f.kind for f in findings], ["repo-name-missing"])
+        reconcile.apply(fake, make_config(), findings)
+        self.assertEqual(fake.edited, [("https://github.com/me/repo/issues/1", "Repo", "repo")])
 
     def test_clean_board_has_no_findings(self):
         good = body.apply("x", {"Status": "In Progress"})

@@ -70,10 +70,13 @@ autopulse init --owner <login> --title "Personal Development" --repo <login>/<re
 | Next Action | Text | 次に取りかかれる具体的な一文 |
 | AI Agent | Single select | Codex, Claude, ChatGPT, Mixed |
 | Effort | Number | 人が設定します。AutoPulse は書き換えません |
+| Repo | Text | リポジトリ名だけ（例 `RoboScope`）。標準の Repository 列は `owner/name` 表示で変えられないため、こちらを表示して Repository 列は隠します |
 
 **表示列は手動で一度だけ設定します。** API で作ったフィールドは既存のビュー（`View 1`）の列に自動では加わらず、
 GitHub には View を変更する API もありません。Project の画面で表の見出し右端の「+」から
-Priority / Next Action / Last Activity / AI Agent / Category を表示し、Save してください。
+Repo / Priority / Next Action / Last Activity / AI Agent / Category を表示し、Save してください
+（標準の Repository 列は `owner/name` で表示されるので、表示しているなら隠します）。
+既存の項目の Repo 列は `autopulse reconcile --apply` で埋まります。
 Status ごとの列で見たい場合は「+ New view」で Board を作ります。
 
 既存の Project に同名で型の違うフィールドがある場合は、削除や作り直しはせず「衝突」として報告して止まります。

@@ -59,6 +59,12 @@ def run(client: GhClient, cfg: Config, spool: Spool, repos: list[str], stale_day
         fields = item["fields"]
         status = fields.get(F("status"))
         managed = managed_body.parse(item["body"])
+        repo_name = repo.split("/")[-1]
+        if fields.get(F("repo_name")) != repo_name:
+            add(Finding(
+                "repo-name-missing", repo, number, f"{F('repo_name')} 列が {repo_name!r} になっていません",
+                fixable=True, url=item["url"],
+            ))
         if item["state"] == "OPEN" and status == "Done":
             add(Finding("done-but-open", repo, number, "Status が Done ですが Issue が open のままです", url=item["url"]))
         if item["state"] == "CLOSED" and status not in ("Done", None):
@@ -105,6 +111,10 @@ def apply(client: GhClient, cfg: Config, findings: list[Finding]) -> list[Findin
     for finding in findings:
         if finding.fixable and finding.kind == "missing-from-board":
             client.add_item(cfg.owner, cfg.project_number, finding.url)
+            client.set_field(cfg.owner, cfg.project_number, finding.url, cfg.field("repo_name"), finding.repo.split("/")[-1])
+            fixed.append(finding)
+        elif finding.fixable and finding.kind == "repo-name-missing":
+            client.set_field(cfg.owner, cfg.project_number, finding.url, cfg.field("repo_name"), finding.repo.split("/")[-1])
             fixed.append(finding)
     return fixed
 
