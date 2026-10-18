@@ -71,6 +71,11 @@ autopulse init --owner <login> --title "Personal Development" --repo <login>/<re
 | AI Agent | Single select | Codex, Claude, ChatGPT, Mixed |
 | Effort | Number | 人が設定します。AutoPulse は書き換えません |
 
+**表示列は手動で一度だけ設定します。** API で作ったフィールドは既存のビュー（`View 1`）の列に自動では加わらず、
+GitHub には View を変更する API もありません。Project の画面で表の見出し右端の「+」から
+Priority / Next Action / Last Activity / AI Agent / Category を表示し、Save してください。
+Status ごとの列で見たい場合は「+ New view」で Board を作ります。
+
 既存の Project に同名で型の違うフィールドがある場合は、削除や作り直しはせず「衝突」として報告して止まります。
 設定は `%LOCALAPPDATA%\AutoPulse\config.toml` に保存されます（例: [examples/config.toml](examples/config.toml)）。
 書き込むのは `[repos] allow` に載っているリポジトリだけです。
