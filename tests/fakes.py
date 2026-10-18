@@ -85,6 +85,13 @@ class FakeClient:
         self._write("set_field", field_name, value)
         self.items[url][field_name] = value
 
+    def set_fields(self, owner, number, url, values, item_id=None):
+        self._write("set_fields", tuple(values))
+        self.items.setdefault(url, {})
+        for name, value in values.items():
+            self.calls.append(("set_field", name, value))
+            self.items[url][name] = value
+
     def edit_body(self, repo, number, body):
         self._write("edit_body", number)
         self.issues[(repo, number)]["body"] = body

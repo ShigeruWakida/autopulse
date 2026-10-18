@@ -54,11 +54,16 @@ class Engine:
 
     def _execute(self, plan: Plan, snap: IssueSnapshot) -> None:
         owner, number, c = self.cfg.owner, self.cfg.project_number, self.client
+        # All field values go out in one request (GitHub limits write requests per hour).
+        fields = {op.field: op.value for op in plan.ops if op.kind == "set_field"}
+        item_id = snap.item_id
         for op in plan.ops:
             if op.kind == "add_item":
-                c.add_item(owner, number, snap.url)
+                item_id = c.add_item(owner, number, snap.url)
             elif op.kind == "set_field":
-                c.set_field(owner, number, snap.url, op.field, op.value)
+                if fields:
+                    c.set_fields(owner, number, snap.url, fields, item_id=item_id)
+                    fields = {}
             elif op.kind == "edit_body":
                 fresh = self._snapshot(plan.event).body
                 if not _same(fresh, op.base_body or ""):

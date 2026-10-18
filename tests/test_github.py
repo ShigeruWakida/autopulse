@@ -93,6 +93,35 @@ class SubprocessRunnerTest(unittest.TestCase):
         self.assertEqual(result.stdout, "a\r\nb\n日本語")
 
 
+class SetFieldsTest(unittest.TestCase):
+    PROJECT = {"data": {"repositoryOwner": {"projectV2": {
+        "id": "PVT_1", "number": 1, "title": "P", "url": "u", "closed": False, "items": {"totalCount": 3},
+        "fields": {"nodes": [
+            {"id": "F_status", "name": "Status", "dataType": "SINGLE_SELECT", "options": [{"id": "o1", "name": "3.作業中"}]},
+            {"id": "F_next", "name": "Next Action", "dataType": "TEXT"},
+            {"id": "F_date", "name": "Last Activity", "dataType": "DATE"},
+        ]},
+    }}}}
+
+    def test_one_request_for_all_fields(self):
+        runner = FakeRunner(ok(self.PROJECT), ok({"data": {}}))
+        client = GhClient(runner, mutation_interval=0)
+        client.set_fields("me", 1, "https://github.com/me/repo/issues/7",
+                          {"Status": "3.作業中", "Next Action": "次", "Last Activity": "2026-10-19"}, item_id="PVTI_7")
+        self.assertEqual(len(runner.calls), 2, "project lookup + one mutation, no item-add for a known item")
+        payload = json.loads(runner.calls[1][1])
+        self.assertEqual(payload["query"].count("updateProjectV2ItemFieldValue"), 3)
+        v = payload["variables"]
+        self.assertEqual((v["project"], v["item"]), ("PVT_1", "PVTI_7"))
+        self.assertEqual((v["v0"], v["v1"], v["v2"]), ({"singleSelectOptionId": "o1"}, {"text": "次"}, {"date": "2026-10-19"}))
+
+    def test_unknown_option_is_rejected_before_writing(self):
+        runner = FakeRunner(ok(self.PROJECT))
+        with self.assertRaises(GhError):
+            GhClient(runner, mutation_interval=0).set_fields("me", 1, "u", {"Status": "Doing"}, item_id="I")
+        self.assertEqual(len(runner.calls), 1)
+
+
 class MutationPacingTest(unittest.TestCase):
     def test_writes_are_spaced_but_reads_are_not(self):
         import time

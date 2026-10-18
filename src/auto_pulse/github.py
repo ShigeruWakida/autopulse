@@ -126,6 +126,7 @@ class ProjectField:
     name: str
     data_type: str  # TEXT, SINGLE_SELECT, DATE, NUMBER, TITLE, ...
     options: list[str] = field(default_factory=list)
+    option_ids: dict[str, str] = field(default_factory=dict)  # option name -> id
 
 
 @dataclass
@@ -298,6 +299,7 @@ class GhClient:
                 name=node["name"],
                 data_type=node.get("dataType", ""),
                 options=[o["name"] for o in node.get("options") or []],
+                option_ids={o["name"]: o["id"] for o in node.get("options") or []},
             )
         return ProjectInfo(
             id=project["id"],
@@ -368,6 +370,47 @@ class GhClient:
     def add_item(self, owner: str, number: int, url: str) -> str:
         out = self.gh("project", "item-add", str(number), "--owner", owner, "--url", url, "--format", "json")
         return json.loads(out)["id"]
+
+    def set_fields(self, owner: str, number: int, url: str, values: dict[str, Any], item_id: str | None = None) -> None:
+        """Set several fields of one item in a single GraphQL request.
+
+        GitHub's secondary limit counts write requests (about 500 per hour), so one aliased
+        mutation instead of one `item-edit` per field matters when registering many issues.
+        """
+        if not values:
+            return
+        key = (owner.lower(), number)
+        cache = getattr(self, "_project_cache", {})
+        info = cache.get(key) or self.get_project(owner, number)
+        if info is None:
+            raise GhError(f"{owner} の Project #{number} が見つかりません")
+        cache[key] = info
+        self._project_cache = cache
+        item_id = item_id or self.add_item(owner, number, url)  # add_item returns the existing item if any
+        params, calls, variables = [], [], {"project": info.id, "item": item_id}
+        for i, (name, value) in enumerate(values.items()):
+            spec = info.fields.get(name)
+            if spec is None:
+                raise GhError(f"Project にフィールド {name!r} がありません")
+            if spec.data_type == "SINGLE_SELECT":
+                option = spec.option_ids.get(str(value))
+                if option is None:
+                    raise GhError(f"{name!r} に選択肢 {value!r} がありません")
+                variables[f"v{i}"] = {"singleSelectOptionId": option}
+            elif spec.data_type == "DATE":
+                variables[f"v{i}"] = {"date": str(value)}
+            elif spec.data_type == "NUMBER":
+                variables[f"v{i}"] = {"number": float(value)}
+            else:
+                variables[f"v{i}"] = {"text": str(value)}
+            variables[f"f{i}"] = spec.id
+            params.append(f"$f{i}: ID!, $v{i}: ProjectV2FieldValue!")
+            calls.append(
+                f"m{i}: updateProjectV2ItemFieldValue(input: {{projectId: $project, itemId: $item, "
+                f"fieldId: $f{i}, value: $v{i}}}) {{ clientMutationId }}"
+            )
+        query = f"mutation($project: ID!, $item: ID!, {', '.join(params)}) {{ {' '.join(calls)} }}"
+        self.graphql(query, variables)
 
     def set_field(self, owner: str, number: int, url: str, field_name: str, value: Any) -> None:
         args = ["project", "item-edit", str(number), "--owner", owner, "--url", url, "--field", field_name]

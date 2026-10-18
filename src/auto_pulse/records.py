@@ -264,8 +264,7 @@ def apply(client: GhClient, cfg: Config, plan: ImportPlan, spool, engine_factory
     repo_name = plan.repo.split("/")[-1]
     for task in plan.new_tasks:
         url = client.create_issue(plan.repo, task.title, task_body(task, record, plan.record_path), ["ai-managed"])
-        client.add_item(cfg.owner, cfg.project_number, url)
-        for key, value in (("status", cfg.label("Backlog")), ("priority", task.priority), ("category", task.category), ("repo_name", repo_name)):
-            client.set_field(cfg.owner, cfg.project_number, url, cfg.field(key), value)
+        values = {"status": cfg.label("Backlog"), "priority": task.priority, "category": task.category, "repo_name": repo_name}
+        client.set_fields(cfg.owner, cfg.project_number, url, {cfg.field(k): v for k, v in values.items()})
         created.append(url)
     return created
