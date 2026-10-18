@@ -95,6 +95,13 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual([f.kind for f in fixed], ["missing-from-board"])
         self.assertEqual(fake.added, ["https://github.com/me/repo/issues/7"])
 
+    def test_blocker_reason_from_issue_form_counts(self):
+        form = "### Summary\nx\n\n### Blockers\n部品の到着待ち\n\n### Notes\ny\n"
+        empty = "### Summary\nx\n\n### Blockers\nNone\n"
+        fake = BoardFake([item(1, "Blocked", issue_body=form), item(2, "Blocked", issue_body=empty)])
+        findings = reconcile.run(fake, make_config(), self.spool, [], today=date(2026, 10, 18))
+        self.assertEqual([(f.kind, f.number) for f in findings], [("blocked-without-reason", 2)])
+
     def test_clean_board_has_no_findings(self):
         good = body.apply("x", {"Status": "In Progress"})
         fake = BoardFake([item(1, "In Progress", issue_body=good, **{"Last Activity": "2026-10-17"})])

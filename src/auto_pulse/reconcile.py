@@ -1,5 +1,6 @@
 """`autopulse reconcile`: find Issue / Project / queue inconsistencies. Fixes only with --apply."""
 
+import re
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 
@@ -19,6 +20,19 @@ class Finding:
     message: str
     fixable: bool = False  # --apply may fix it (only safe, additive fixes)
     url: str | None = None
+
+
+_BLOCKERS_SECTION = re.compile(r"^#{1,6}\s*Blockers\s*$\n(.*?)(?=^#{1,6}\s|\Z)", re.M | re.S | re.I)
+
+
+def _blocker_reason(text: str, managed) -> str:
+    """Reason from the managed block, else from the issue form's Blockers section."""
+    reason = managed.values.get("Blockers", "")
+    if reason and reason != "None":
+        return reason
+    m = _BLOCKERS_SECTION.search(managed_body.outside(text).replace("\r\n", "\n"))
+    section = m.group(1).strip() if m else ""
+    return "" if section.lower() in ("", "none", "_no response_") else section
 
 
 def run(client: GhClient, cfg: Config, spool: Spool, repos: list[str], stale_days: int = 14, today: date | None = None) -> list[Finding]:
@@ -59,7 +73,7 @@ def run(client: GhClient, cfg: Config, spool: Spool, repos: list[str], stale_day
                 add(Finding("stale", repo, number, f"In Progress のまま {last} 以降の活動記録がありません", url=item["url"]))
         if status == "Done" and not managed.values.get("Evidence"):
             add(Finding("done-without-evidence", repo, number, "Done ですが管理欄に検証の証跡がありません", url=item["url"]))
-        if status == "Blocked" and managed.values.get("Blockers", "None") in ("", "None"):
+        if status == "Blocked" and not _blocker_reason(item["body"], managed):
             add(Finding("blocked-without-reason", repo, number, "Blocked ですが Blocker の理由が記録されていません", url=item["url"]))
         if managed.present and not managed.intact:
             add(Finding("managed-edited", repo, number, "管理欄が手動編集されています（AutoPulse は更新を止めています）", url=item["url"]))
