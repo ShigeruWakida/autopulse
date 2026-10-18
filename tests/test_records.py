@@ -112,6 +112,8 @@ class ImportTest(unittest.TestCase):
         plan2, created2 = self.run_import()  # the same record again
         self.assertTrue(plan2.already_imported)
         self.assertEqual(plan2.new_decision_entries, [])
+        self.assertEqual(plan2.notes, [], "the dry-run shows the comment as already posted")
+        self.assertEqual(plan2.noted_before, [(0, 1)])
         self.assertEqual(plan2.new_tasks, [])
         self.assertEqual(created2, [])
         self.assertEqual(len(self.fake.comments[("me/repo", 1)]), 1, "no duplicate comment")

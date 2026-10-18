@@ -375,8 +375,10 @@ def cmd_import_decisions(ctx: Ctx) -> int:
         new = any(i == j for j, _ in plan.new_decision_entries)
         target = "、".join(f"#{n}" for n in d.issues) or "Issue なし"
         noted = [e.issue for e, j in zip(plan.notes, plan.note_decision) if j == i]
+        before = [n for j, n in plan.noted_before if j == i]
         lines.append(f"  [決定] {d.title}（{target}）: DECISIONS.md に{'追記' if new else '記録済み'}"
-                     + (f"、{'・'.join(f'#{n}' for n in noted)} に ChatGPT の記録を残す" if noted else ""))
+                     + (f"、{'・'.join(f'#{n}' for n in noted)} に ChatGPT の記録を残す" if noted else "")
+                     + (f"、{'・'.join(f'#{n}' for n in before)} はコメント済み" if before else ""))
     for t in plan.new_tasks:
         lines.append(f"  [新規] Issue「{t.title}」{t.priority} {t.category} 完了条件 {len(t.criteria)} 件 → {cfg.label('Backlog')}")
     for t in plan.existing_tasks:

@@ -213,6 +213,7 @@ class ImportPlan:
     new_decision_entries: list[tuple[int, Decision]] = field(default_factory=list)
     notes: list[Event] = field(default_factory=list)
     note_decision: list[int] = field(default_factory=list)  # decision index of each note
+    noted_before: list[tuple[int, int]] = field(default_factory=list)  # (decision index, issue)
     new_tasks: list[Task] = field(default_factory=list)
     existing_tasks: list[Task] = field(default_factory=list)
     referenced_tasks: list[tuple[Task, list[int]]] = field(default_factory=list)
@@ -235,7 +236,11 @@ def build(client: GhClient, cfg: Config, repo: str, root: Path, record: Record) 
             except AutoPulseError as exc:
                 plan.warnings.append(f"#{number} を確認できないためコメントしません: {exc}")
                 continue
-            plan.notes.append(note_event(record, i, decision, repo, number))
+            event = note_event(record, i, decision, repo, number)
+            if event.id in client.comment_event_ids(repo, number):
+                plan.noted_before.append((i, number))  # imported earlier: the comment exists
+                continue
+            plan.notes.append(event)
             plan.note_decision.append(i)
 
     titles = client.issue_titles(repo) if record.tasks else {}
