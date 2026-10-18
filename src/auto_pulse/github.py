@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -187,12 +188,27 @@ def _parse_issue(repo: str, node: dict, project_owner: str | None, project_numbe
     return snap
 
 
+_MUTATING = {
+    ("issue", "comment"), ("issue", "edit"), ("issue", "create"), ("issue", "close"),
+    ("project", "item-add"), ("project", "item-edit"), ("project", "create"), ("project", "field-create"),
+    ("label", "create"),
+}
+
+
 class GhClient:
-    def __init__(self, runner: Runner):
+    def __init__(self, runner: Runner, mutation_interval: float = 1.0):
         self.runner = runner
+        # GitHub's secondary rate limit trips on bursts of writes; keep >= 1 s between them.
+        self.mutation_interval = mutation_interval
+        self._last_mutation = 0.0
 
     # -- low level ---------------------------------------------------------
     def gh(self, *args: str, input: str | None = None) -> str:
+        if tuple(args[:2]) in _MUTATING or (tuple(args[:2]) == ("api", "graphql") and input and "mutation(" in input):
+            wait = self._last_mutation + self.mutation_interval - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last_mutation = time.monotonic()
         return check(self.runner.run(list(args), input=input)).stdout
 
     def graphql(self, query: str, variables: dict) -> dict:

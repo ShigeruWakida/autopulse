@@ -41,7 +41,7 @@ ISSUE_NODE = {
 class GhClientTest(unittest.TestCase):
     def test_get_issue_picks_configured_project_only(self):
         runner = FakeRunner(ok({"data": {"repository": {"issue": ISSUE_NODE}}}))
-        snap = GhClient(runner).get_issue("me/repo", 7, "me", 1)
+        snap = GhClient(runner, mutation_interval=0).get_issue("me/repo", 7, "me", 1)
         self.assertEqual(snap.item_id, "PVTI_7")
         self.assertEqual(snap.fields, {"Status": "Review", "Next Action": "次", "Last Activity": "2026-10-17", "Effort": 3.0})
         args, payload = runner.calls[0]
@@ -51,11 +51,11 @@ class GhClientTest(unittest.TestCase):
     def test_graphql_errors_raise(self):
         runner = FakeRunner(ok({"data": None, "errors": [{"message": "Could not resolve"}]}))
         with self.assertRaises(GhError):
-            GhClient(runner).get_issue("me/repo", 7, "me", 1)
+            GhClient(runner, mutation_interval=0).get_issue("me/repo", 7, "me", 1)
 
     def test_set_field_uses_name_based_item_edit(self):
         runner = FakeRunner(ok(""), ok(""))
-        client = GhClient(runner)
+        client = GhClient(runner, mutation_interval=0)
         client.set_field("me", 1, "https://github.com/me/repo/issues/7", "Status", "In Progress")
         client.set_field("me", 1, "https://github.com/me/repo/issues/7", "Next Action", "")
         self.assertEqual(
@@ -66,7 +66,7 @@ class GhClientTest(unittest.TestCase):
 
     def test_comment_body_goes_through_stdin(self):
         runner = FakeRunner(ok(""))
-        GhClient(runner).add_comment("me/repo", 7, "本文 `--danger`")
+        GhClient(runner, mutation_interval=0).add_comment("me/repo", 7, "本文 `--danger`")
         args, stdin = runner.calls[0]
         self.assertEqual(args, ["issue", "comment", "7", "--repo", "me/repo", "--body-file", "-"])
         self.assertEqual(stdin, "本文 `--danger`")
@@ -74,16 +74,16 @@ class GhClientTest(unittest.TestCase):
     def test_comment_event_ids(self):
         bodies = ["<!-- autopulse:event=0b1c2d3e-0000-4000-8000-000000000001 -->\nx", "人のコメント"]
         runner = FakeRunner(ok("\n".join(json.dumps(b) for b in bodies)))
-        self.assertEqual(GhClient(runner).comment_event_ids("me/repo", 7), {"0b1c2d3e-0000-4000-8000-000000000001"})
+        self.assertEqual(GhClient(runner, mutation_interval=0).comment_event_ids("me/repo", 7), {"0b1c2d3e-0000-4000-8000-000000000001"})
 
     def test_auth_status_parsing(self):
         text = "github.com\n  ✓ Logged in to github.com account octo (keyring)\n  - Token scopes: 'gist', 'project', 'repo'\n"
-        status = GhClient(FakeRunner(Result(0, text, ""))).auth_status()
+        status = GhClient(mutation_interval=0, runner=FakeRunner(Result(0, text, ""))).auth_status()
         self.assertEqual(status, {"logged_in": True, "account": "octo", "scopes": ["gist", "project", "repo"]})
 
     def test_bad_repo_name(self):
         with self.assertRaises(GhError):
-            GhClient(FakeRunner()).get_issue("noslash", 1, None, None)
+            GhClient(mutation_interval=0, runner=FakeRunner()).get_issue("noslash", 1, None, None)
 
 
 class SubprocessRunnerTest(unittest.TestCase):
@@ -91,6 +91,18 @@ class SubprocessRunnerTest(unittest.TestCase):
         echo = "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"
         result = SubprocessRunner(sys.executable).run(["-c", echo], input="a\r\nb\n日本語")
         self.assertEqual(result.stdout, "a\r\nb\n日本語")
+
+
+class MutationPacingTest(unittest.TestCase):
+    def test_writes_are_spaced_but_reads_are_not(self):
+        import time
+        runner = FakeRunner(ok(""), ok(""), ok(""))
+        client = GhClient(runner, mutation_interval=0.2)
+        start = time.monotonic()
+        client.gh("issue", "view", "1")
+        client.add_comment("me/repo", 1, "a")
+        client.add_comment("me/repo", 1, "b")
+        self.assertGreaterEqual(time.monotonic() - start, 0.2)
 
 
 class ClassifyTest(unittest.TestCase):
