@@ -113,6 +113,65 @@ class EngineTest(unittest.TestCase):
         self.assertEqual([r.status for r in results], ["failed", "applied"])
 
 
+class NextActionHoldTest(unittest.TestCase):
+    """Option B: a human Next Action is held until the Status changes."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.spool = Spool(Path(self.tmp.name) / "queue")
+        self.fake = FakeClient()
+        self.url = self.fake.add_issue(1)
+        self.engine = Engine(self.fake, make_config())
+        self.send("start", agent="claude", next="AI の一手")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def send(self, kind, agent="claude", **data):
+        self.spool.put(Event(type=kind, repo="me/repo", issue=1, agent=agent, data=data))
+        return process(self.engine, self.spool)[-1]
+
+    def human_sets(self, text):
+        self.fake.items[self.url]["Next Action"] = text
+
+    @property
+    def board(self):
+        return self.fake.items[self.url]["Next Action"]
+
+    def test_held_while_status_unchanged_then_released(self):
+        self.human_sets("人の指示")
+        self.assertEqual(self.send("note", summary="s", next="AI-1").status, "conflict")
+        self.assertEqual(self.send("note", summary="s", next="AI-2").status, "conflict")
+        self.assertEqual(self.board, "人の指示")
+        result = self.send("review", evidence="e", next="レビュー依頼")
+        self.assertEqual(result.status, "applied")
+        self.assertEqual(self.board, "レビュー依頼")
+        self.assertNotIn("hold_next", body.parse(self.fake.issues[("me/repo", 1)]["body"]).meta)
+
+    def test_hold_remembers_status_it_was_first_seen_in(self):
+        self.human_sets("人の指示")
+        self.send("note", summary="次を指定しない記録")  # sees the human value in In Progress
+        self.send("review", evidence="e")  # Status changes, nothing to write
+        self.assertEqual(self.board, "人の指示")
+        self.assertEqual(self.send("note", summary="s", next="AI の次").status, "applied")
+        self.assertEqual(self.board, "AI の次")
+
+    def test_new_human_edit_after_release_is_held_again(self):
+        self.human_sets("人の指示1")
+        self.send("review", evidence="e", next="AI")
+        self.assertEqual(self.board, "AI")
+        self.human_sets("人の指示2")
+        self.assertEqual(self.send("note", summary="s", next="AI-2").status, "conflict")
+        self.assertEqual(self.board, "人の指示2")
+
+    def test_human_clearing_the_field_hands_it_back(self):
+        self.human_sets("人の指示")
+        self.send("note", summary="s", next="AI-1")
+        self.human_sets("")
+        self.assertEqual(self.send("note", summary="s", next="AI-2").status, "applied")
+        self.assertEqual(self.board, "AI-2")
+
+
 class SpoolTest(unittest.TestCase):
     def test_secrets_are_masked_before_hitting_disk(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,6 +4,7 @@ Nothing here talks to GitHub, so every rule (state transitions, Done gating,
 conflict handling) is unit-testable without mocks.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -148,20 +149,42 @@ def build_plan(
             activity = event.local_date
 
     managed = managed_body.parse(snap.body)
+    meta = dict(managed.meta)
     next_action = (event.data.get("next") or "").strip()
     written_next = None
+
+    # A Next Action a human typed on the board is held until the Status changes. The hold
+    # remembers the Status it was first seen in and a digest of the value, so a fresh human
+    # edit starts a new hold.
+    on_board = fields.get(F("next_action")) or ""
+    last_ours = managed.values.get("Next Action", "")
+    hold = meta.get("hold_next")
+    if on_board and on_board != last_ours:
+        if not hold or hold.get("value") != _digest(on_board):
+            hold = {"status": current, "value": _digest(on_board)}
+    else:
+        hold = None
+
     if next_action:
-        on_board = fields.get(F("next_action")) or ""
-        last_ours = managed.values.get("Next Action", "")
         if on_board == next_action:
             written_next = next_action
-        elif on_board and on_board != last_ours:
+            hold = None
+        elif hold and hold["status"] == plan.status_after:
             plan.conflicts.append(
-                f"Projects の Next Action が手動で変更されているため上書きしませんでした（現行値: {on_board!r}）"
+                f"Projects の Next Action は人が設定した値のため、Status が {hold['status'] or '（未登録）'} "
+                f"から変わるまで上書きしません（現行値: {on_board!r}、提案: {next_action!r}）"
             )
         else:
+            if hold:
+                plan.notes.append(f"人が設定した Next Action {on_board!r} は Status が変わったため更新しました")
             ops.append(Op("set_field", F("next_action"), next_action))
             written_next = next_action
+            hold = None
+
+    if hold:
+        meta["hold_next"] = hold
+    else:
+        meta.pop("hold_next", None)
 
     if managed.present and not managed.intact:
         plan.conflicts.append("Issue 本文の AutoPulse 管理欄が手動で編集されているため、管理欄は更新しませんでした")
@@ -183,7 +206,7 @@ def build_plan(
         # A downgraded complete keeps the evidence recorded by review; its own goes to the comment only.
         if event.type in ("review", "complete") and event.data.get("evidence") and plan.outcome != "downgraded":
             values["Evidence"] = event.data["evidence"]
-        new_body = managed_body.apply(snap.body, values)
+        new_body = managed_body.apply(snap.body, values, meta)
         # CRLF vs LF alone is no change; stray "\r\r\n" from older versions does get repaired.
         if new_body != snap.body.replace("\r\n", "\n"):
             ops.append(Op("edit_body", body=new_body, base_body=snap.body))
@@ -193,6 +216,10 @@ def build_plan(
 
     ops.append(Op("comment", body=render_comment(event, plan)))
     return plan
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def render_comment(event: Event, plan: Plan) -> str:

@@ -5,12 +5,14 @@ hash of its own content so a human edit inside it is detected and left alone.
 """
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 
 START = "<!-- autopulse:start -->"
 END = "<!-- autopulse:end -->"
 _HASH = re.compile(r"<!-- autopulse:hash=([0-9a-f]{12}) -->")
+_META = re.compile(r"<!-- autopulse:meta=(\{.*?\}) -->")
 _ITEM = re.compile(r"^- \*\*(.+?):\*\* ?(.*)$")
 KEYS = ["Status", "Agent", "Last Activity", "Next Action", "Blockers", "Evidence"]
 
@@ -23,7 +25,6 @@ def _normalize(text: str) -> str:
     return "\n".join(line.rstrip() for line in re.sub(r"\r+\n", "\n", text).split("\n")).strip()
 
 
-
 def _digest(content: str) -> str:
     return hashlib.sha256(_normalize(content).encode("utf-8")).hexdigest()[:12]
 
@@ -33,6 +34,7 @@ class Managed:
     present: bool = False
     values: dict[str, str] = field(default_factory=dict)
     intact: bool = True  # False when a human edited inside the block (or markers are broken)
+    meta: dict = field(default_factory=dict)  # hidden bookkeeping, e.g. a held human Next Action
 
 
 def _locate(body: str) -> tuple[int, int] | None:
@@ -54,17 +56,26 @@ def parse(body: str) -> Managed:
     inner = body[span[0] + len(START) : span[1] - len(END)]
     hash_match = _HASH.search(inner)
     content = _HASH.sub("", inner)
+    meta = {}
+    meta_match = _META.search(content)
+    if meta_match:
+        try:
+            meta = json.loads(meta_match.group(1))
+        except json.JSONDecodeError:
+            meta = {}
     values = {}
     for line in _normalize(content).split("\n"):
         m = _ITEM.match(line.strip())
         if m:
             values[m.group(1)] = m.group(2).strip()
     intact = bool(hash_match) and hash_match.group(1) == _digest(content)
-    return Managed(present=True, values=values, intact=intact)
+    return Managed(present=True, values=values, intact=intact, meta=meta)
 
 
-def render(values: dict[str, str]) -> str:
+def render(values: dict[str, str], meta: dict | None = None) -> str:
     lines = ["### AutoPulse"]
+    if meta:
+        lines.insert(0, f"<!-- autopulse:meta={json.dumps(meta, ensure_ascii=False, sort_keys=True)} -->")
     for key in KEYS:
         value = values.get(key)
         if value:
@@ -77,11 +88,11 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
-def apply(body: str, values: dict[str, str]) -> str:
+def apply(body: str, values: dict[str, str], meta: dict | None = None) -> str:
     """Return body with the managed block replaced (or appended). Text outside keeps its content;
     only line endings are normalized to LF (GitHub returns CRLF for web-edited bodies)."""
     body = re.sub(r"\r+\n", "\n", body)
-    block = render(values)
+    block = render(values, meta)
     span = _locate(body)
     if span is None:
         base = body.rstrip()
