@@ -163,6 +163,13 @@ class OnboardTest(unittest.TestCase):
         again = onboard.build(self.fake, config.load(), "me/repo", self.root)
         self.assertEqual({c.path: c.action for c in again.files}["CLAUDE.md"], "unchanged")
 
+    def test_gitignored_target_is_reported(self):
+        self.write(".gitignore", ".codex/\n")
+        plan = onboard.build(self.fake, self.cfg, "me/repo", self.root)
+        reasons = {c.path: c.reason for c in plan.files}
+        self.assertIn(".gitignore", reasons[".codex/hooks.json"])
+        self.assertNotIn(".gitignore", reasons[".claude/settings.json"])
+
     def test_invalid_json_is_left_alone(self):
         self.write(".codex/hooks.json", "{ not json")
         plan = onboard.build(self.fake, self.cfg, "me/repo", self.root)

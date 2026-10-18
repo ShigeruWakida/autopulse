@@ -9,6 +9,7 @@ import copy
 import difflib
 import json
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +121,14 @@ def _json_change(root: Path, rel: str, wanted: dict) -> FileChange:
     return FileChange(rel, "merge", json.dumps(merged, ensure_ascii=False, indent=2) + "\n", old, "既存の設定を残して Hook を追加")
 
 
+def _ignored(root: Path, rel: str) -> bool:
+    try:
+        result = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", rel], capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 def build(client: GhClient, cfg: Config, repo: str, root: Path, update_workflow: bool = False) -> OnboardPlan:
     if not (root / ".git").exists():
         raise AutoPulseError(f"{root} は git リポジトリのルートではありません")
@@ -137,6 +146,9 @@ def build(client: GhClient, cfg: Config, repo: str, root: Path, update_workflow:
         _json_change(root, ".claude/settings.json", CLAUDE_HOOKS),
         _json_change(root, ".codex/hooks.json", CODEX_HOOKS),
     ]
+    for change in plan.files:
+        if change.action != "skip" and _ignored(root, change.path):
+            change.reason = (change.reason + "; " if change.reason else "") + ".gitignore で除外されるためコミットされません（他の PC には届きません）"
     plan.create_label = not client.label_exists(repo, AI_LABEL[0])
     plan.add_to_allowlist = not cfg.allows(repo)
     return plan
