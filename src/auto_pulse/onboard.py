@@ -61,7 +61,8 @@ class OnboardPlan:
 
 
 def _template(name: str, cfg: Config, repo: str) -> str:
-    text = (TEMPLATES / name).read_text(encoding="utf-8")
+    # git autocrlf may check templates out with CRLF; compare and write with LF only.
+    text = (TEMPLATES / name).read_bytes().decode("utf-8").replace("\r\n", "\n")
     return text.replace("{{REPO}}", repo).replace("{{PROJECT_TITLE}}", cfg.project_title)
 
 
