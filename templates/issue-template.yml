@@ -1,0 +1,56 @@
+name: AI タスク
+description: AI（Codex / Claude Code）と進めるタスク。AutoPulse が進捗を記録します。
+labels: ["ai-managed"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: 何をするタスクか
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: チェック可能な完了条件。人間の確認が必要な項目には先頭に [human] を付けてください（AI は Done にできません）。
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: 完了をどう検証するか（テストコマンド、実機確認の手順など）
+    validations:
+      required: true
+  - type: textarea
+    id: next-action
+    attributes:
+      label: Next Action
+      description: 次に取りかかれる具体的な一文
+    validations:
+      required: true
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Blockers
+      value: None
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Related decisions
+      description: 関連する docs/DECISIONS.md の項目など（任意）
+  - type: textarea
+    id: related
+    attributes:
+      label: Related PR/commit
+      description: 任意
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: 任意

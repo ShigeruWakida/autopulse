@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -67,6 +68,32 @@ query($owner: String!, $number: Int!) {
   }
 }"""
 
+PROJECT_ITEMS_QUERY = (
+    """
+query($owner: String!, $number: Int!, $after: String) {
+  repositoryOwner(login: $owner) {
+    ... on ProjectV2Owner {
+      projectV2(number: $number) {
+        items(first: 100, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            content {
+              __typename
+              ... on Issue { number title url state body repository { nameWithOwner } }
+              ... on PullRequest { number title url state repository { nameWithOwner } }
+            }
+            """
+    + _FIELD_VALUES
+    + """
+          }
+        }
+      }
+    }
+  }
+}"""
+)
+
 UPDATE_OPTIONS_MUTATION = """
 mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
   updateProjectV2Field(input: {fieldId: $field, singleSelectOptions: $options}) {
@@ -108,6 +135,21 @@ class ProjectInfo:
     url: str
     item_count: int
     fields: dict[str, ProjectField]
+
+
+def parse_github_url(url: str) -> str | None:
+    """owner/name from an https or ssh GitHub remote URL."""
+    m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url.strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def origin_of(path: str | None = None) -> str | None:
+    args = ["git"] + (["-C", path] if path else []) + ["remote", "get-url", "origin"]
+    try:
+        url = subprocess.run(args, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_github_url(url)
 
 
 def split_repo(repo: str) -> tuple[str, str]:
@@ -239,6 +281,47 @@ class GhClient:
             item_count=project["items"]["totalCount"],
             fields=fields,
         )
+
+    def project_items(self, owner: str, number: int) -> list[dict]:
+        """All items with content type, repo, state, body and field values (by field name)."""
+        items, after = [], None
+        while True:
+            data = self.graphql(PROJECT_ITEMS_QUERY, {"owner": owner, "number": number, "after": after})
+            page = data["repositoryOwner"]["projectV2"]["items"]
+            for node in page["nodes"]:
+                content = node.get("content") or {}
+                fields = {}
+                for value in node.get("fieldValues", {}).get("nodes", []):
+                    name = (value.get("field") or {}).get("name")
+                    for key in ("name", "text", "date", "number"):
+                        if name and key in value:
+                            fields[name] = value[key]
+                            break
+                items.append({
+                    "id": node["id"],
+                    "type": content.get("__typename", "DraftIssue"),
+                    "repo": (content.get("repository") or {}).get("nameWithOwner"),
+                    "number": content.get("number"),
+                    "title": content.get("title", ""),
+                    "url": content.get("url"),
+                    "state": content.get("state"),
+                    "body": content.get("body") or "",
+                    "fields": fields,
+                })
+            if not page["pageInfo"]["hasNextPage"]:
+                return items
+            after = page["pageInfo"]["endCursor"]
+
+    def ensure_label(self, repo: str, name: str, color: str, description: str) -> bool:
+        """Create the label if missing. Returns True when it was created."""
+        if self.label_exists(repo, name):
+            return False
+        self.gh("label", "create", name, "--repo", repo, "--color", color, "--description", description)
+        return True
+
+    def label_exists(self, repo: str, name: str) -> bool:
+        out = self.gh("label", "list", "--repo", repo, "--search", name, "--json", "name", "--limit", "100")
+        return any(label["name"].lower() == name.lower() for label in json.loads(out or "[]"))
 
     def create_project(self, owner: str, title: str) -> int:
         out = self.gh("project", "create", "--owner", owner, "--title", title, "--format", "json")

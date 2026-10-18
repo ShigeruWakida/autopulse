@@ -3,17 +3,15 @@
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
 from pathlib import Path
 
-from auto_pulse import __version__, body, bootstrap, doctor
+from auto_pulse import __version__, body, bootstrap, doctor, hooks, onboard, reconcile
 from auto_pulse import config as config_mod
 from auto_pulse.config import AGENTS
 from auto_pulse.engine import Engine, process
 from auto_pulse.errors import AutoPulseError, ExitCode, PolicyRefused, TransientError
-from auto_pulse.github import GhClient
+from auto_pulse.github import GhClient, origin_of
 from auto_pulse.redact import redact
 from auto_pulse.runner import SubprocessRunner
 from auto_pulse.spool import Event, Spool
@@ -42,7 +40,8 @@ OUTCOME_LABELS = {
 class Ctx:
     def __init__(self, args):
         self.args = args
-        self.client = GhClient(SubprocessRunner())
+        # Hooks run inside an agent session with their own timeout: keep each gh call short.
+        self.client = GhClient(SubprocessRunner(timeout=15 if args.command == "hook" else 60))
         self.spool = Spool(config_mod.home() / "queue")
 
     def config(self):
@@ -56,19 +55,8 @@ class Ctx:
 
 
 # -- helpers -----------------------------------------------------------------
-def detect_repo() -> str | None:
-    try:
-        url = subprocess.run(
-            ["git", "remote", "get-url", "origin"], capture_output=True, text=True, timeout=10
-        ).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    m = re.search(r"github\.com[:/]([^/]+)/(.+?)(?:\.git)?/?$", url)
-    return f"{m.group(1)}/{m.group(2)}" if m else None
-
-
 def resolve_repo(args) -> str:
-    repo = args.repo or detect_repo()
+    repo = args.repo or origin_of()
     if not repo:
         raise AutoPulseError("--repo owner/name を指定してください（origin から推定できませんでした）")
     return repo
@@ -276,6 +264,65 @@ def cmd_sync(ctx: Ctx) -> int:
     return ExitCode.OK
 
 
+def cmd_reconcile(ctx: Ctx) -> int:
+    a = ctx.args
+    cfg = ctx.config()
+    findings = reconcile.run(ctx.client, cfg, ctx.spool, a.repo or [], stale_days=a.stale_days)
+    lines = [f"検出 {len(findings)} 件" + ("" if a.apply else "（dry-run: 何も変更していません）")]
+    for f in findings:
+        where = f"{f.repo}#{f.number}" if f.number else (f.repo or "-")
+        lines.append(f"  [{f.kind}] {where}: {f.message}" + ("（--apply で修正可）" if f.fixable and not a.apply else ""))
+    fixed = reconcile.apply(ctx.client, cfg, findings) if a.apply else []
+    if a.apply:
+        lines.append(f"修正 {len(fixed)} 件（Projects への追加のみ。その他は報告だけです）")
+    ctx.out(lines, {"findings": reconcile.to_json(findings), "fixed": reconcile.to_json(fixed), "applied": a.apply})
+    return ExitCode.OK
+
+
+def cmd_onboard(ctx: Ctx) -> int:
+    a = ctx.args
+    cfg = ctx.config()
+    root = Path(a.path).resolve() if a.path else Path.cwd()
+    plan = onboard.build(ctx.client, cfg, a.repo, root, update_workflow=a.update_workflow)
+    labels = {"create": "作成", "append": "追記", "update": "更新", "merge": "マージ", "skip": "変更しない", "unchanged": "変更なし"}
+    lines = [f"{a.repo} ({root})"]
+    for change in plan.files:
+        lines.append(f"  [{labels[change.action]}] {change.path}" + (f" — {change.reason}" if change.reason else ""))
+    lines.append(f"  [GitHub] ラベル ai-managed: {'作成' if plan.create_label else '既存'}")
+    lines.append(f"  [設定] allowlist: {'追加' if plan.add_to_allowlist else '登録済み'}")
+    diffs = [c.diff() for c in plan.files if c.action in ("create", "append", "update", "merge")]
+    data = {
+        "repo": a.repo,
+        "root": str(root),
+        "files": [{"path": c.path, "action": c.action, "reason": c.reason} for c in plan.files],
+        "create_label": plan.create_label,
+        "add_to_allowlist": plan.add_to_allowlist,
+        "applied": False,
+    }
+    if not a.apply:
+        if a.diff:
+            lines += ["", *diffs]
+        lines += ["", "（dry-run: 何も変更していません。--diff で差分、--apply で実行）"]
+        ctx.out(lines, data | {"diffs": diffs})
+        return ExitCode.OK
+    backup = onboard.apply(ctx.client, cfg, plan)
+    lines.append(f"導入しました。バックアップ: {backup}" if backup else "導入しました（上書きしたファイルはありません）")
+    lines.append("ファイルはコミットしていません。内容を確認してコミットしてください。Codex は /hooks で Hook を信頼する必要があります。")
+    ctx.out(lines, data | {"applied": True, "backup": str(backup) if backup else None})
+    return ExitCode.OK
+
+
+def cmd_hook(ctx: Ctx) -> int:
+    try:
+        stdin_text = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
+    except (OSError, ValueError):
+        stdin_text = ""
+    output = hooks.run(ctx.args.event, ctx.args.agent, stdin_text, ctx.client)
+    if output:
+        print(output)
+    return ExitCode.OK
+
+
 # -- parser ------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
@@ -333,7 +380,33 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--dry-run", action="store_true", help="未送信イベントを表示するだけ")
     s.add_argument("--retry-failed", action="store_true", help="失敗扱いのイベント（queue/failed）もキューに戻して再送")
 
-    for name, handler in [("doctor", cmd_doctor), ("init", cmd_init), ("status", cmd_status), ("sync", cmd_sync)]:
+    s = sub.add_parser("reconcile", parents=[common], help="Issue/Projects/キューの矛盾を報告（既定は dry-run）")
+    s.add_argument("--repo", action="append", help="対象リポジトリ（省略時は allowlist 全体）")
+    s.add_argument("--stale-days", type=int, default=14, help="In Progress を停滞とみなす日数")
+    s.add_argument("--apply", action="store_true", help="安全な修正（ai-managed Issue の Projects 追加）だけ実行")
+    s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
+
+    s = sub.add_parser("onboard", parents=[common], help="リポジトリに AI 共通ファイルと Hook を導入（既定は dry-run）")
+    s.add_argument("--repo", required=True, help="owner/name")
+    s.add_argument("--path", help="ローカルのクローン（省略時はカレントディレクトリ）")
+    s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
+    s.add_argument("--diff", action="store_true", help="dry-run で差分を表示")
+    s.add_argument("--update-workflow", action="store_true", help="既存の .ai/workflow.md をテンプレートで更新（バックアップあり）")
+    s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
+
+    s = sub.add_parser("hook", parents=[common], help="Claude Code / Codex の Hook から呼ぶ（常に終了コード 0）")
+    s.add_argument("event", choices=["session-start", "stop", "session-end"])
+    s.add_argument("--agent", choices=["claude", "codex"])
+
+    for name, handler in [
+        ("doctor", cmd_doctor),
+        ("init", cmd_init),
+        ("status", cmd_status),
+        ("sync", cmd_sync),
+        ("reconcile", cmd_reconcile),
+        ("onboard", cmd_onboard),
+        ("hook", cmd_hook),
+    ]:
         sub.choices[name].set_defaults(handler=handler)
     return p
 
@@ -349,13 +422,18 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)
+    is_hook = args.command == "hook"  # a hook must never fail the agent session
     try:
         return int(args.handler(Ctx(args)))
     except AutoPulseError as exc:
+        if is_hook:
+            return ExitCode.OK
         print(f"autopulse: {redact(str(exc))}", file=sys.stderr)
         return int(exc.exit_code)
     except KeyboardInterrupt:
-        return ExitCode.ERROR
+        return ExitCode.OK if is_hook else ExitCode.ERROR
     except Exception as exc:  # never let a crash leak a traceback with secrets
+        if is_hook:
+            return ExitCode.OK
         print(f"autopulse: 予期しないエラー: {redact(repr(exc))}", file=sys.stderr)
         return ExitCode.ERROR

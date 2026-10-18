@@ -1,0 +1,26 @@
+# AutoPulse configuration example.
+# Real file: %LOCALAPPDATA%\AutoPulse\config.toml (created by `autopulse init`).
+# It holds no secrets: authentication is always taken from `gh auth`.
+
+[project]
+owner = "your-login"
+number = 1
+title = "Personal Development"
+
+[fields]
+# logical key = actual field name on the GitHub Project
+status = "Status"
+priority = "Priority"
+category = "Category"
+last_activity = "Last Activity"
+next_action = "Next Action"
+ai_agent = "AI Agent"
+effort = "Effort"
+
+[repos]
+# Only these repositories are ever written to.
+allow = ["your-login/your-repo"]
+
+[policy]
+# An Acceptance Criteria line containing one of these needs a human to mark Done.
+human_approval_patterns = ["[human]", "[人間承認]", "人間承認"]
