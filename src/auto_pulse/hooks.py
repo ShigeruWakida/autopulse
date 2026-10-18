@@ -42,7 +42,8 @@ def session_context(client: GhClient, cfg: Config, spool: Spool, repo: str, agen
     if not rows:
         lines.append("- 進行中・待機中の Issue はありません")
     for _, snap, status in rows[:MAX_ISSUES]:
-        lines.append(f"- #{snap.number} [{status}] {snap.title}")
+        agent_label = snap.fields.get(cfg.field("ai_agent"))
+        lines.append(f"- #{snap.number} [{status}] {snap.title}" + (f"（AI Agent: {agent_label}）" if agent_label else ""))
         next_action = snap.fields.get(cfg.field("next_action"))
         if next_action:
             lines.append(f"  次: {next_action}")
@@ -101,7 +102,9 @@ def run(event: str, agent: str | None, stdin_text: str, client: GhClient) -> str
                 {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}},
                 ensure_ascii=False,
             )
-        results = process(Engine(client, cfg), spool)
+        # force: events queued inside the Codex sandbox got a backoff from a failure that was
+        # never a real GitHub attempt (no keyring there). Stop fires at most once per turn.
+        results = process(Engine(client, cfg), spool, force=True)
         outcome = "sync " + ",".join(r.status for r in results)
         return ""
     except Exception as exc:  # noqa: BLE001 - hooks must never break the session
