@@ -16,7 +16,7 @@ from tests.fakes import make_config
 
 
 def item(number, status=None, state="OPEN", issue_body="", repo="me/repo", **fields):
-    values = {"Repo": repo.split("/")[-1], **({"Status": status} if status else {}), **fields}
+    values = {"Repo Name": repo.split("/")[-1], **({"Status": status} if status else {}), **fields}
     return {
         "id": f"PVTI_{number}", "type": "Issue", "repo": repo, "number": number, "title": f"t{number}",
         "url": f"https://github.com/{repo}/issues/{number}", "state": state, "body": issue_body, "fields": values,
@@ -107,11 +107,11 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual([(f.kind, f.number) for f in findings], [("blocked-without-reason", 2)])
 
     def test_repo_name_column_is_backfilled(self):
-        fake = BoardFake([item(1, "Backlog", Repo=None)])
+        fake = BoardFake([item(1, "Backlog", **{"Repo Name": None})])
         findings = reconcile.run(fake, make_config(), self.spool, [], today=date(2026, 10, 18))
         self.assertEqual([f.kind for f in findings], ["repo-name-missing"])
         reconcile.apply(fake, make_config(), findings)
-        self.assertEqual(fake.edited, [("https://github.com/me/repo/issues/1", "Repo", "repo")])
+        self.assertEqual(fake.edited, [("https://github.com/me/repo/issues/1", "Repo Name", "repo")])
 
     def test_clean_board_has_no_findings(self):
         good = body.apply("x", {"Status": "In Progress"})

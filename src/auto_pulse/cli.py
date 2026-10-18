@@ -102,7 +102,7 @@ def cmd_init(ctx: Ctx) -> int:
             "",
             f"初期化しました: Project #{cfg.project_number} / 設定 {config_mod.config_path()}",
             "表の列は自動では増えません（GitHub に View を変更する API がないため）。Project の画面で見出し右端の「+」から",
-            "Repo / Priority / Next Action / Last Activity / AI Agent / Category を表示して Save してください。",
+            "Repo Name / Priority / Next Action / Last Activity / AI Agent / Category を表示して Save してください。",
         ],
         data,
     )
@@ -283,7 +283,7 @@ def cmd_reconcile(ctx: Ctx) -> int:
         lines.append(f"  [{f.kind}] {where}: {f.message}" + ("（--apply で修正可）" if f.fixable and not a.apply else ""))
     fixed = reconcile.apply(ctx.client, cfg, findings) if a.apply else []
     if a.apply:
-        lines.append(f"修正 {len(fixed)} 件（Projects への追加のみ。その他は報告だけです）")
+        lines.append(f"修正 {len(fixed)} 件（Projects への追加と Repo Name 列の補完だけ。その他は報告のみ）")
     ctx.out(lines, {"findings": reconcile.to_json(findings), "fixed": reconcile.to_json(fixed), "applied": a.apply})
     return ExitCode.OK
 
@@ -414,7 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("reconcile", parents=[common], help="Issue/Projects/キューの矛盾を報告（既定は dry-run）")
     s.add_argument("--repo", action="append", help="対象リポジトリ（省略時は allowlist 全体）")
     s.add_argument("--stale-days", type=int, default=14, help="In Progress を停滞とみなす日数")
-    s.add_argument("--apply", action="store_true", help="安全な修正（ai-managed Issue の Projects 追加）だけ実行")
+    s.add_argument("--apply", action="store_true", help="安全な修正（ai-managed Issue の Projects 追加、Repo Name 列の補完）だけ実行")
     s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
 
     s = sub.add_parser("onboard", parents=[common], help="リポジトリに AI 共通ファイルと Hook を導入（既定は dry-run）")

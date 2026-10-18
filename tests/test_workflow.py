@@ -28,7 +28,7 @@ class TransitionTest(unittest.TestCase):
         self.assertEqual(ops["Status"], "In Progress")
         self.assertEqual(ops["AI Agent"], "Claude")
         self.assertEqual(ops["Priority"], "P2")
-        self.assertEqual(ops["Repo"], "repo", "repository name without the owner")
+        self.assertEqual(ops["Repo Name"], "repo", "repository name without the owner")
         self.assertNotIn("Last Activity", ops, "start alone must not count as work")
 
     def test_start_from_backlog_is_refused(self):
