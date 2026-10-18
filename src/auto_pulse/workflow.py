@@ -57,16 +57,19 @@ class Plan:
     conflicts: list[str] = field(default_factory=list)
 
 
-def check_transition(current: str | None, target: str, event: Event) -> None:
+def check_transition(current: str | None, target: str, event: Event, cfg: Config | None = None) -> None:
+    name = cfg.label if cfg else (lambda s: s)
     if current is not None and current not in STATUSES:
         raise PolicyRefused(f"現在の Status {current!r} は AutoPulse の状態にありません（Projects の選択肢を確認してください）")
     if current == "Backlog" and target == "In Progress":
-        raise PolicyRefused("Backlog の Issue は要件と完了条件を確認して Ready にしてから start してください")
+        raise PolicyRefused(
+            f"{name('Backlog')} の Issue は要件と完了条件を確認して {name('Ready')} にしてから start してください"
+        )
     if current not in ALLOWED_FROM[target]:
-        shown = current or "（Projects 未登録）"
-        raise PolicyRefused(f"{shown} → {target} には遷移できません（先に start してください）")
+        shown = name(current) if current else "（Projects 未登録）"
+        raise PolicyRefused(f"{shown} → {name(target)} には遷移できません（先に start してください）")
     if (current, target) in REASON_REQUIRED and not event.data.get("reason"):
-        raise PolicyRefused(f"Done → {target} に戻すには --reason で理由を記録してください")
+        raise PolicyRefused(f"{name('Done')} → {name(target)} に戻すには --reason で理由を記録してください")
 
 
 def completion_blockers(event: Event, snap: IssueSnapshot, cfg: Config) -> list[str]:
@@ -102,7 +105,7 @@ def build_plan(
     F = cfg.field
     fields = snap.fields
     in_project = snap.item_id is not None
-    current = fields.get(F("status")) if in_project else None
+    current = cfg.logical(fields.get(F("status"))) if in_project else None
     plan = Plan(event=event, status_before=current, status_after=current)
 
     if event.id in posted_event_ids:
@@ -117,11 +120,11 @@ def build_plan(
         if reasons:
             target = "Review"
             plan.outcome = "downgraded"
-            plan.notes.append("Done にせず Review に留めました: " + "; ".join(reasons))
+            plan.notes.append(f"{cfg.label('Done')} にせず {cfg.label('Review')} に留めました: " + "; ".join(reasons))
     if target:
-        check_transition(current, target, event)
+        check_transition(current, target, event, cfg)
         if target == "Done" and current == "In Progress":
-            plan.notes.append("In Progress → Review → Done を一度に記録しました")
+            plan.notes.append(f"{cfg.label('In Progress')} → {cfg.label('Review')} → {cfg.label('Done')} を一度に記録しました")
         plan.status_after = target
 
     ops = plan.ops
@@ -129,7 +132,7 @@ def build_plan(
         ops.append(Op("add_item"))
 
     if target and current != target:
-        ops.append(Op("set_field", F("status"), target))
+        ops.append(Op("set_field", F("status"), cfg.label(target)))
 
     agent_label = fields.get(F("ai_agent"))
     if event.agent:
@@ -175,7 +178,7 @@ def build_plan(
             hold = None
         elif hold and hold["status"] == plan.status_after:
             plan.conflicts.append(
-                f"Projects の Next Action は人が設定した値のため、Status が {hold['status'] or '（未登録）'} "
+                f"Projects の Next Action は人が設定した値のため、Status が {cfg.label(hold['status']) or '（未登録）'} "
                 f"から変わるまで上書きしません（現行値: {on_board!r}、提案: {next_action!r}）"
             )
         else:
@@ -196,7 +199,7 @@ def build_plan(
         plan.conflicts.append("Issue 本文の同時更新が続いたため、管理欄の更新を見送りました")
     else:
         values = dict(managed.values)
-        values["Status"] = plan.status_after or values.get("Status", "")
+        values["Status"] = cfg.label(plan.status_after) or values.get("Status", "")
         if agent_label:
             values["Agent"] = agent_label
         if activity:
@@ -218,7 +221,7 @@ def build_plan(
     if plan.status_after == "Done" and event.data.get("close") and snap.state == "OPEN":
         ops.append(Op("close"))
 
-    ops.append(Op("comment", body=render_comment(event, plan)))
+    ops.append(Op("comment", body=render_comment(event, plan, cfg)))
     return plan
 
 
@@ -226,12 +229,13 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
-def render_comment(event: Event, plan: Plan) -> str:
+def render_comment(event: Event, plan: Plan, cfg: Config | None = None) -> str:
+    name = cfg.label if cfg else (lambda s: s)
     agent = AGENTS.get(event.agent or "", "")
     head = f"**AutoPulse** `{event.type}`" + (f" · {agent}" if agent else "") + f" · {event.created_at[:16].replace('T', ' ')}"
     lines = [f"<!-- autopulse:event={event.id} -->", head, ""]
     if plan.status_before != plan.status_after:
-        lines.append(f"- 状態: {plan.status_before or '（未登録）'} → {plan.status_after}")
+        lines.append(f"- 状態: {name(plan.status_before) or '（未登録）'} → {name(plan.status_after)}")
     labels = [("summary", "要約"), ("next", "次の一手"), ("reason", "理由"), ("evidence", "証跡")]
     for key, label in labels:
         if event.data.get(key):

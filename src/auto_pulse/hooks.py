@@ -35,9 +35,9 @@ def session_context(client: GhClient, cfg: Config, spool: Spool, repo: str, agen
     status_key = cfg.field("status")
     rows = []
     for snap in issues:
-        status = snap.fields.get(status_key)
+        status = cfg.logical(snap.fields.get(status_key))
         if status in SHOWN_STATUSES:
-            rows.append((SHOWN_STATUSES.index(status), snap, status))
+            rows.append((SHOWN_STATUSES.index(status), snap, cfg.label(status)))
     rows.sort(key=lambda r: (r[0], r[1].number))
     lines = [f"[AutoPulse] {repo} の進行中タスク（GitHub Projects「{cfg.project_title}」）"]
     if not rows:

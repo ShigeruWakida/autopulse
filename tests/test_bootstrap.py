@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 from auto_pulse import bootstrap, config
-from auto_pulse.config import FIELD_SPECS, STATUSES
+from auto_pulse.config import DEFAULT_STATUS_LABELS, FIELD_SPECS, STATUSES
 from auto_pulse.errors import PolicyRefused
 from auto_pulse.github import ProjectField, ProjectInfo
 
@@ -65,7 +65,7 @@ class BootstrapTest(unittest.TestCase):
         plan = bootstrap.build(fake, "me", "Personal Development", None, ["me/RoboScope"])
         cfg = bootstrap.apply(fake, plan, update_status_options=True)
         self.assertEqual(cfg.project_number, 3)
-        self.assertEqual(fake.projects[3].fields["Status"].options, STATUSES)
+        self.assertEqual(fake.projects[3].fields["Status"].options, list(DEFAULT_STATUS_LABELS.values()))
         self.assertIn(("create_field", "Next Action", "TEXT"), fake.calls)
         loaded = config.load()
         self.assertEqual((loaded.project_number, loaded.repos), (3, ["me/RoboScope"]))

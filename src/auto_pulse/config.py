@@ -7,7 +7,18 @@ from pathlib import Path
 
 from auto_pulse.errors import ConfigError
 
+# Logical statuses used by the rules (transitions, Done gating). What the Project shows is
+# configurable per status in [statuses]; the default is numbered Japanese.
 STATUSES = ["Backlog", "Ready", "In Progress", "Blocked", "Review", "Done"]
+STATUS_KEYS = {"backlog": "Backlog", "ready": "Ready", "in_progress": "In Progress", "blocked": "Blocked", "review": "Review", "done": "Done"}
+DEFAULT_STATUS_LABELS = {
+    "Backlog": "1.未着手",
+    "Ready": "2.着手可",
+    "In Progress": "3.作業中",
+    "Blocked": "4.停止中",
+    "Review": "5.確認待ち",
+    "Done": "6.完了",
+}
 STATUS_COLORS = {
     "Backlog": "GRAY",
     "Ready": "BLUE",
@@ -57,10 +68,29 @@ class Config:
     fields: dict[str, str] = field(default_factory=lambda: {k: v[0] for k, v in FIELD_SPECS.items()})
     repos: list[str] = field(default_factory=list)
     human_approval_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_HUMAN_APPROVAL_PATTERNS))
+    status_labels: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_STATUS_LABELS))
     path: Path | None = None
 
     def field(self, key: str) -> str:
         return self.fields[key]
+
+    def label(self, status: str | None) -> str | None:
+        """Logical status -> the option name shown on the Project."""
+        return self.status_labels.get(status, status) if status else status
+
+    def logical(self, value: str | None) -> str | None:
+        """Option name on the Project (or a logical name) -> logical status; unknown values pass through."""
+        if not value:
+            return None
+        for logical, label in self.status_labels.items():
+            if value == label:
+                return logical
+        return value
+
+    def field_options(self, key: str) -> list[str]:
+        if key == "status":
+            return [self.label(s) for s in STATUSES]
+        return FIELD_SPECS[key][2]
 
     def allows(self, repo: str) -> bool:
         return repo.lower() in {r.lower() for r in self.repos}
@@ -82,6 +112,14 @@ def load(path: Path | None = None) -> Config:
     if unknown:
         raise ConfigError(f"[fields] に不明なキーがあります: {', '.join(sorted(unknown))}")
     fields.update(data.get("fields", {}))
+    labels = dict(DEFAULT_STATUS_LABELS)
+    unknown = set(data.get("statuses", {})) - set(STATUS_KEYS)
+    if unknown:
+        raise ConfigError(f"[statuses] に不明なキーがあります: {', '.join(sorted(unknown))}")
+    for key, label in data.get("statuses", {}).items():
+        labels[STATUS_KEYS[key]] = label
+    if len(set(labels.values())) != len(labels):
+        raise ConfigError("[statuses] の表示名が重複しています")
     policy = data.get("policy", {})
     return Config(
         owner=project["owner"],
@@ -90,6 +128,7 @@ def load(path: Path | None = None) -> Config:
         fields=fields,
         repos=list(data.get("repos", {}).get("allow", [])),
         human_approval_patterns=list(policy.get("human_approval_patterns", DEFAULT_HUMAN_APPROVAL_PATTERNS)),
+        status_labels=labels,
         path=path,
     )
 
@@ -108,6 +147,10 @@ def dumps(cfg: Config) -> str:
         "",
         "[fields]",
         *(f"{key} = {_q(name)}" for key, name in cfg.fields.items()),
+        "",
+        "[statuses]",
+        "# Option names of the Status field for each logical status (the rules use the logical ones).",
+        *(f"{key} = {_q(cfg.status_labels[logical])}" for key, logical in STATUS_KEYS.items()),
         "",
         "[repos]",
         "# Only these repositories are ever written to.",

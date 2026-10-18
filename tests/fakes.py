@@ -2,7 +2,7 @@
 
 import copy
 
-from auto_pulse.config import Config
+from auto_pulse.config import STATUSES, Config
 from auto_pulse.errors import TransientError
 from auto_pulse.github import EVENT_MARKER, IssueSnapshot
 
@@ -19,7 +19,8 @@ unittest
 
 
 def make_config(**kw) -> Config:
-    cfg = Config(owner="me", project_number=1, repos=["me/repo"])
+    # Tests speak in logical status names; the label mapping has its own tests.
+    cfg = Config(owner="me", project_number=1, repos=["me/repo"], status_labels={s: s for s in STATUSES})
     for k, v in kw.items():
         setattr(cfg, k, v)
     return cfg

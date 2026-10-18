@@ -64,7 +64,8 @@ def run(client: GhClient, cfg_path=None) -> list[Check]:
             else:
                 add(Check("project", "ok", f"#{info.number} {info.title} ({info.item_count} items) {info.url}"))
         if info:
-            for key, (_, data_type, options) in FIELD_SPECS.items():
+            for key, (_, data_type, _) in FIELD_SPECS.items():
+                options = cfg.field_options(key)
                 name = cfg.field(key)
                 found = info.fields.get(name)
                 if not found:

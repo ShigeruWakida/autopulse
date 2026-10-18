@@ -28,7 +28,7 @@ OUTCOME_CODES = {
 OUTCOME_LABELS = {
     "applied": "反映しました",
     "noop": "反映済みのため何もしませんでした",
-    "downgraded": "Done にせず Review に留めました",
+    "downgraded": "完了（Done）にせず確認待ち（Review）に留めました",
     "conflict": "反映しました（競合あり。現行値を保持）",
     "queued": "GitHub に反映できなかったためキューに保存しました（autopulse sync で再送）",
     "waiting": "先行イベントの送信待ちのためキューに保存しました",

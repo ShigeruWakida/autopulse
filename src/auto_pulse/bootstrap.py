@@ -27,7 +27,8 @@ class InitPlan:
 
 def _field_diff(plan: InitPlan, cfg: Config, info: ProjectInfo | None) -> None:
     fields = info.fields if info else {"Status": None}
-    for key, (_, data_type, options) in FIELD_SPECS.items():
+    for key, (_, data_type, _) in FIELD_SPECS.items():
+        options = cfg.field_options(key)
         name = cfg.field(key)
         if name not in fields:
             plan.create_fields.append(key)
@@ -92,11 +93,12 @@ def describe(plan: InitPlan) -> list[str]:
     else:
         lines.append(f"[既存] Project #{plan.number} {plan.title!r}")
     for key in plan.create_fields:
-        name, data_type, options = FIELD_SPECS[key]
+        name, data_type, _ = FIELD_SPECS[key]
+        options = plan.config.field_options(key)
         lines.append(f"[作成] フィールド {name!r} {data_type}" + (f" {options}" if options else ""))
     if plan.replace_status_options is not None:
         lines.append(
-            f"[置換] Status の選択肢 {plan.replace_status_options} → {STATUSES}"
+            f"[置換] Status の選択肢 {plan.replace_status_options} → {plan.config.field_options('status')}"
             "（--update-status-options が必要。項目が 0 件のときだけ実行）"
         )
     for conflict in plan.conflicts:
@@ -117,13 +119,14 @@ def apply(client: GhClient, plan: InitPlan, update_status_options: bool) -> Conf
     cfg.project_number = number
     info = client.get_project(plan.owner, number)
     status = info.fields.get(cfg.field("status"))
-    if status and not set(STATUSES) <= set(status.options):
+    wanted = cfg.field_options("status")
+    if status and not set(wanted) <= set(status.options):
         if info.item_count:
             raise PolicyRefused(f"Project に {info.item_count} 件の項目があるため Status の選択肢は置換しません")
-        client.replace_single_select_options(status.id, [(s, STATUS_COLORS[s]) for s in STATUSES])
-    for key, (_, data_type, options) in FIELD_SPECS.items():
+        client.replace_single_select_options(status.id, [(cfg.label(s), STATUS_COLORS[s]) for s in STATUSES])
+    for key, (_, data_type, _) in FIELD_SPECS.items():
         name = cfg.field(key)
         if name not in info.fields:
-            client.create_field(plan.owner, number, name, data_type, options or None)
+            client.create_field(plan.owner, number, name, data_type, cfg.field_options(key) or None)
     config_mod.save(cfg)
     return cfg

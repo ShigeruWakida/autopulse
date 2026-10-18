@@ -57,7 +57,8 @@ def run(client: GhClient, cfg: Config, spool: Spool, repos: list[str], stale_day
                 add(Finding("not-allowlisted", repo, number, "allowlist 外のリポジトリの Issue が Projects にあります（書き込み対象外）", url=item["url"]))
             continue
         fields = item["fields"]
-        status = fields.get(F("status"))
+        shown = fields.get(F("status"))
+        status = cfg.logical(shown)
         managed = managed_body.parse(item["body"])
         repo_name = repo.split("/")[-1]
         if fields.get(F("repo_name")) != repo_name:
@@ -66,27 +67,27 @@ def run(client: GhClient, cfg: Config, spool: Spool, repos: list[str], stale_day
                 fixable=True, url=item["url"],
             ))
         if item["state"] == "OPEN" and status == "Done":
-            add(Finding("done-but-open", repo, number, "Status が Done ですが Issue が open のままです", url=item["url"]))
+            add(Finding("done-but-open", repo, number, f"Status が {shown} ですが Issue が open のままです", url=item["url"]))
         if item["state"] == "CLOSED" and status not in ("Done", None):
-            add(Finding("closed-not-done", repo, number, f"Issue は closed ですが Status が {status} です", url=item["url"]))
+            add(Finding("closed-not-done", repo, number, f"Issue は closed ですが Status が {shown} です", url=item["url"]))
         if item["state"] == "OPEN" and not status:
             add(Finding("no-status", repo, number, "Projects にありますが Status が未設定です", url=item["url"]))
         if status == "In Progress":
             last = fields.get(F("last_activity"))
             if not last:
-                add(Finding("stale", repo, number, "In Progress ですが Last Activity が一度も記録されていません", url=item["url"]))
+                add(Finding("stale", repo, number, f"{shown} ですが Last Activity が一度も記録されていません", url=item["url"]))
             elif date.fromisoformat(last) < today - timedelta(days=stale_days):
-                add(Finding("stale", repo, number, f"In Progress のまま {last} 以降の活動記録がありません", url=item["url"]))
+                add(Finding("stale", repo, number, f"{shown} のまま {last} 以降の活動記録がありません", url=item["url"]))
         if status == "Done" and not managed.values.get("Evidence"):
-            add(Finding("done-without-evidence", repo, number, "Done ですが管理欄に検証の証跡がありません", url=item["url"]))
+            add(Finding("done-without-evidence", repo, number, f"{shown} ですが管理欄に検証の証跡がありません", url=item["url"]))
         if status == "Blocked" and not _blocker_reason(item["body"], managed):
-            add(Finding("blocked-without-reason", repo, number, "Blocked ですが Blocker の理由が記録されていません", url=item["url"]))
+            add(Finding("blocked-without-reason", repo, number, f"{shown} ですが Blocker の理由が記録されていません", url=item["url"]))
         if managed.present and not managed.intact:
             add(Finding("managed-edited", repo, number, "管理欄が手動編集されています（AutoPulse は更新を止めています）", url=item["url"]))
-        if status and managed.present and managed.intact and managed.values.get("Status") not in (None, status):
+        if status and managed.present and managed.intact and cfg.logical(managed.values.get("Status")) not in (None, status):
             add(Finding(
                 "status-mismatch", repo, number,
-                f"Projects の Status ({status}) と管理欄 ({managed.values.get('Status')}) が異なります（手動変更の可能性）",
+                f"Projects の Status ({shown}) と管理欄 ({managed.values.get('Status')}) が異なります（手動変更の可能性）",
                 url=item["url"],
             ))
 
