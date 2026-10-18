@@ -69,6 +69,13 @@ class Engine:
                 c.add_comment(snap.repo, snap.number, op.body)
 
 
+def _quietly(fn, *args) -> None:
+    try:
+        fn(*args)
+    except OSError:
+        pass
+
+
 @dataclass
 class Outcome:
     event: Event
@@ -99,18 +106,20 @@ def process(engine: Engine, spool: Spool, only: tuple[str, int] | None = None, f
                 held.add(key)
                 results.append(Outcome(event, "locked", error="別プロセスが処理中"))
                 continue
+            # Queue bookkeeping can fail where the queue file is read-only (e.g. a sandboxed
+            # process seeing the main queue). The event then simply stays for the next sync.
             try:
                 plan = engine.apply(event)
             except TransientError as exc:
-                spool.retry_later(event, str(exc), now)
+                _quietly(spool.retry_later, event, str(exc), now)
                 held.add(key)
                 results.append(Outcome(event, "queued", error=str(exc)))
                 continue
             except AutoPulseError as exc:
-                spool.fail(event, str(exc))
+                _quietly(spool.fail, event, str(exc))
                 results.append(Outcome(event, "failed", error=str(exc), code=int(exc.exit_code)))
                 continue
-            spool.done(event)
+            _quietly(spool.done, event)
             status = plan.outcome
             if status == "applied" and plan.conflicts:
                 status = "conflict"

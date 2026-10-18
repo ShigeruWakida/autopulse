@@ -189,6 +189,31 @@ class SpoolTest(unittest.TestCase):
             spool.retry_later(event, "x")
             self.assertGreater(event.next_attempt_at, first)
 
+    def test_falls_back_when_main_queue_is_not_writable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = Path(tmp) / "blocked"
+            blocker.write_text("not a directory")  # mkdir under a file fails like a read-only dir
+            spool = Spool(blocker / "queue", Path(tmp) / "fallback")
+            path = spool.put(Event(type="note", repo="me/repo", issue=1, data={"summary": "s"}))
+            self.assertEqual(path.parent, Path(tmp) / "fallback")
+            with spool.lock("me/repo", 1) as acquired:
+                self.assertTrue(acquired)
+
+    def test_events_from_all_roots_are_sent_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main, fallback = Path(tmp) / "main", Path(tmp) / "fallback"
+            first = Event(type="start", repo="me/repo", issue=1, agent="codex", created_at="2026-10-18T10:00:00+09:00")
+            second = Event(type="note", repo="me/repo", issue=1, data={"summary": "s", "next": "n"}, created_at="2026-10-18T10:05:00+09:00")
+            Spool(fallback).put(first)  # queued from inside a sandbox
+            Spool(main).put(second)
+            fake = FakeClient()
+            url = fake.add_issue(1)
+            spool = Spool(main, fallback)
+            results = process(Engine(fake, make_config()), spool)
+            self.assertEqual([(r.event.type, r.status) for r in results], [("start", "applied"), ("note", "applied")])
+            self.assertEqual(fake.items[url]["Next Action"], "n")
+            self.assertEqual(spool.pending(), [])
+
     def test_lock_is_exclusive(self):
         with tempfile.TemporaryDirectory() as tmp:
             spool = Spool(Path(tmp))

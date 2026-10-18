@@ -7,7 +7,7 @@ from auto_pulse import config as config_mod
 from auto_pulse.config import FIELD_SPECS
 from auto_pulse.errors import AutoPulseError
 from auto_pulse.github import GhClient
-from auto_pulse.spool import Spool
+from auto_pulse.spool import Spool, default_spool
 
 WRITE_PERMISSIONS = {"ADMIN", "MAINTAIN", "WRITE"}
 
@@ -96,7 +96,7 @@ def run(client: GhClient, cfg_path=None) -> list[Check]:
                 problems.append("アーカイブ済み")
             add(Check(f"repo:{repo}", "fail" if problems else "ok", ", ".join(problems) or info_repo.get("viewerPermission", "")))
 
-    spool = Spool(config_mod.home() / "queue")
+    spool = default_spool()
     try:
         spool.root.mkdir(parents=True, exist_ok=True)
         probe = spool.root / ".probe"

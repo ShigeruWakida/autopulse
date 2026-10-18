@@ -15,7 +15,7 @@ from auto_pulse.redact import redact
 from auto_pulse.config import Config
 from auto_pulse.engine import Engine, process
 from auto_pulse.github import GhClient, origin_of
-from auto_pulse.spool import Spool
+from auto_pulse.spool import Spool, default_spool
 
 SHOWN_STATUSES = ("In Progress", "Blocked", "Review", "Ready")
 MAX_ISSUES = 10
@@ -83,7 +83,7 @@ def run(event: str, agent: str | None, stdin_text: str, client: GhClient) -> str
     try:
         payload = _payload(stdin_text)
         cwd = payload.get("cwd") or os.getcwd()
-        spool = Spool(config_mod.home() / "queue")
+        spool = default_spool()
         if event in ("stop", "session-end") and not spool.pending():
             outcome = "queue empty"
             return ""  # nothing to send: no network, no delay

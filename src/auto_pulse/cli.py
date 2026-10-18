@@ -14,7 +14,7 @@ from auto_pulse.errors import AutoPulseError, ExitCode, PolicyRefused, Transient
 from auto_pulse.github import GhClient, origin_of
 from auto_pulse.redact import redact
 from auto_pulse.runner import SubprocessRunner
-from auto_pulse.spool import Event, Spool
+from auto_pulse.spool import Event, default_spool
 
 OUTCOME_CODES = {
     "applied": ExitCode.OK,
@@ -42,7 +42,7 @@ class Ctx:
         self.args = args
         # Hooks run inside an agent session with their own timeout: keep each gh call short.
         self.client = GhClient(SubprocessRunner(timeout=15 if args.command == "hook" else 60))
-        self.spool = Spool(config_mod.home() / "queue")
+        self.spool = default_spool()
 
     def config(self):
         return config_mod.load(Path(self.args.config) if self.args.config else None)
