@@ -11,6 +11,7 @@
   autopulse status --repo {{REPO}}
   ```
 - 作業する Issue を 1 つ決めます。ユーザーの依頼がどの Issue か分からないときは、推測で決めずに確認します。
+- Issue が {{STATUS_BACKLOG}} のままだと start できません。人に {{STATUS_READY}} にしてもらってから始めます。
 - 作業を始めるときに一度だけ記録します（`--agent` は自分に合わせて `claude` または `codex`）。
   ```
   autopulse start --repo {{REPO}} --issue <番号> --agent <claude|codex>
@@ -29,36 +30,36 @@
   ```
 
 ## 3. 実装が終わったら
-- テスト・確認の結果を証跡として Review にします。
+- テスト・確認の結果を証跡として {{STATUS_REVIEW}} にします。
   ```
   autopulse review --repo {{REPO}} --issue <番号> --agent <claude|codex> --evidence "<テストコマンドと結果 / PR / コミット>"
   ```
-- Done にできるのは、次をすべて満たすときだけです。
+- {{STATUS_DONE}} にできるのは、次をすべて満たすときだけです。
   1. Issue の Acceptance Criteria がすべてチェック済み
   2. Verification に書かれた検証を実際に実行して成功した
   3. Acceptance Criteria に `[human]`（人間承認）が付いた項目がない
   ```
   autopulse complete --repo {{REPO}} --issue <番号> --agent <claude|codex> --evidence "<証跡>" --verified
   ```
-- 条件を満たさない場合 AutoPulse は Done にせず Review に留めます（終了コード 4）。その結果を受け入れ、ユーザーに何が残っているかを伝えます。`--verified` を検証なしで付けてはいけません。
+- 条件を満たさない場合 AutoPulse は {{STATUS_DONE}} にせず {{STATUS_REVIEW}} に留めます（終了コード 4）。その結果を受け入れ、ユーザーに何が残っているかを伝えます。`--verified` を検証なしで付けてはいけません。
 
 ## 4. 守ること
 - 仕様・優先順位・設計判断を AI が勝手に確定しません。決まった判断は、ユーザーの了承を得て `docs/DECISIONS.md` に追記します。
 - Issue 本文の人間が書いた部分を書き換えません。AutoPulse が更新するのは `<!-- autopulse:start -->` から `<!-- autopulse:end -->` の間だけです。
 - Projects の Next Action を人が書き換えた場合、その Status の間は AutoPulse は上書きしません（終了コード 5 で通知）。人の指示を優先して作業します。
 - `autopulse` が失敗しても開発作業は止めません。終了コード 3（キュー保存）はそのまま進めてよく、後で `autopulse sync` が再送します。
-- 1 つのリポジトリで複数の Issue が In Progress でも構いません。コマンドには必ず対象の `--issue` を明示します。
+- 1 つのリポジトリで複数の Issue が {{STATUS_IN_PROGRESS}} でも構いません。コマンドには必ず対象の `--issue` を明示します。
 
 ## 終了コード
 
 Codex など、コマンドを `pwsh -Command` 経由で実行する環境では、0 以外の終了コードがすべて 1 に見えることがあります。
-その場合は出力の文面（「キューに保存しました」「Review に留めました」など）で判断してください。
+その場合は出力の文面（「キューに保存しました」「確認待ち（Review）に留めました」など）で判断してください。
 Codex のサンドボックス内では GitHub に書き込めないため、記録は一時キューに保存され、応答の終わりに Hook が送信します。
 
 | コード | 意味 | AI の対応 |
 | --- | --- | --- |
 | 0 | 反映した | そのまま続ける |
 | 3 | キューに保存（GitHub 未反映） | 続けてよい。後で sync |
-| 4 | 方針により拒否 / Review に留めた | 理由を読み、ユーザーに伝える |
+| 4 | 方針により拒否 / {{STATUS_REVIEW}} に留めた | 理由を読み、ユーザーに伝える |
 | 5 | 人の編集と競合し、現行値を保持 | 人の値を尊重して続ける |
 | 6 | 設定・認証の問題 | `autopulse doctor` の結果をユーザーに伝える |

@@ -63,7 +63,7 @@ autopulse init --owner <login> --title "Personal Development" --repo <login>/<re
 
 | フィールド | 型 | 値 |
 | --- | --- | --- |
-| Status | Single select | Backlog, Ready, In Progress, Blocked, Review, Done |
+| Status | Single select | 1.未着手, 2.着手可, 3.作業中, 4.停止中, 5.確認待ち, 6.完了（Backlog〜Done。表示名は `[statuses]` で変更可） |
 | Priority | Single select | P0, P1, P2, P3（未設定なら P2 を入れます） |
 | Category | Single select | Spec, Hardware, PCB, Firmware, Software, Test, Docs, Other |
 | Last Activity | Date | 記録された作業があった日（start だけでは更新しません） |
@@ -80,6 +80,9 @@ Repo Name / Priority / Next Action / Last Activity / AI Agent / Category を表�
 Status ごとの列で見たい場合は「+ New view」で Board を作ります。
 
 既存の Project に同名で型の違うフィールドがある場合は、削除や作り直しはせず「衝突」として報告して止まります。
+Status の表示名は `config.toml` の `[statuses]` で決まります（既定は番号付きの日本語）。ルールは内部の名前（Backlog〜Done）で動くので、
+表示名を変えるときは Project の Settings で選択肢の名前を変えてから `[statuses]` を合わせます（選択肢の名前変更なら各項目の値は保たれます）。
+
 設定は `%LOCALAPPDATA%\AutoPulse\config.toml` に保存されます（例: [examples/config.toml](examples/config.toml)）。
 書き込むのは `[repos] allow` に載っているリポジトリだけです。
 
@@ -160,13 +163,13 @@ autopulse reconcile --apply     # 安全な修正（ai-managed Issue の Project
 ### 状態遷移
 
 ```
-Backlog → Ready → In Progress ⇄ Blocked
-                      ↓
-                    Review → Done
-Done → In Progress / Blocked（--reason 必須）
+1.未着手 →(人) 2.着手可 → 3.作業中 ⇄ 4.停止中
+                             ↓
+                          5.確認待ち → 6.完了
+6.完了 → 3.作業中 / 4.停止中（--reason 必須）
 ```
 
-- Backlog から直接 `start` はできません（要件を確認して Ready にしてから）
+- 1.未着手 から直接 `start` はできません（要件を確認して人が 2.着手可 にしてから）
 - `complete` が Done にするのは次をすべて満たすときだけです。満たさなければ Review に留めます（終了コード 4）
   - `--verified` と `--evidence` がある
   - Issue 本文の Acceptance Criteria がすべてチェック済み

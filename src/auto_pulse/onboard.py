@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from auto_pulse import config as config_mod
-from auto_pulse.config import Config
+from auto_pulse.config import STATUS_KEYS, Config
 from auto_pulse.errors import AutoPulseError, PolicyRefused
 from auto_pulse.github import GhClient, origin_of
 
@@ -65,7 +65,10 @@ class OnboardPlan:
 def _template(name: str, cfg: Config, repo: str) -> str:
     # git autocrlf may check templates out with CRLF; compare and write with LF only.
     text = (TEMPLATES / name).read_bytes().decode("utf-8").replace("\r\n", "\n")
-    return text.replace("{{REPO}}", repo).replace("{{PROJECT_TITLE}}", cfg.project_title)
+    text = text.replace("{{REPO}}", repo).replace("{{PROJECT_TITLE}}", cfg.project_title)
+    for key, logical in STATUS_KEYS.items():
+        text = text.replace("{{STATUS_" + key.upper() + "}}", cfg.label(logical))
+    return text
 
 
 def _read(path: Path) -> str | None:
