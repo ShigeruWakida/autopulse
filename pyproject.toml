@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autopulse"
+version = "0.1.0"
+description = "AI-driven progress sync for GitHub Projects and Issues"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+autopulse = "auto_pulse.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
