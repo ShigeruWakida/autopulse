@@ -150,13 +150,16 @@ def apply(client: GhClient, cfg: Config, plan: OnboardPlan) -> Path | None:
         if change.action not in ("create", "append", "update", "merge"):
             continue
         target = plan.root / change.path
+        content = change.new
         if target.exists():
             dest = backup_root / change.path
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(target, dest)
             backed_up = True
+            if b"\r\n" in target.read_bytes():  # keep the file's own line-ending style
+                content = content.replace("\n", "\r\n")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(change.new.encode("utf-8"))
+        target.write_bytes(content.encode("utf-8"))
     if plan.create_label:
         client.ensure_label(plan.repo, *AI_LABEL)
     if plan.add_to_allowlist:

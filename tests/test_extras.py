@@ -153,6 +153,16 @@ class OnboardTest(unittest.TestCase):
         again = onboard.build(self.fake, config.load(), "me/repo", self.root)
         self.assertEqual({c.action for c in again.files} - {"skip"}, {"unchanged"}, "second run changes nothing")
 
+    def test_crlf_file_keeps_crlf(self):
+        (self.root / "CLAUDE.md").write_bytes("# 既存\r\n手書き\r\n".encode("utf-8"))
+        plan = onboard.build(self.fake, self.cfg, "me/repo", self.root)
+        onboard.apply(self.fake, self.cfg, plan)
+        raw = (self.root / "CLAUDE.md").read_bytes()
+        self.assertTrue(raw.startswith("# 既存\r\n手書き\r\n".encode("utf-8")))
+        self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+        again = onboard.build(self.fake, config.load(), "me/repo", self.root)
+        self.assertEqual({c.path: c.action for c in again.files}["CLAUDE.md"], "unchanged")
+
     def test_invalid_json_is_left_alone(self):
         self.write(".codex/hooks.json", "{ not json")
         plan = onboard.build(self.fake, self.cfg, "me/repo", self.root)
