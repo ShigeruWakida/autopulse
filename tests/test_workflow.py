@@ -96,6 +96,12 @@ class DoneGateTest(unittest.TestCase):
         self.assertEqual(field_ops(plan)["Status"], "Done")
         self.assertIn("close", [op.kind for op in plan.ops])
 
+    def test_downgraded_complete_keeps_review_evidence(self):
+        issue_body = body.apply(AC_BODY, {"Status": "Review", "Evidence": "CI green"})
+        plan = plan_for("complete", fields=self.review, issue_body=issue_body, evidence="目視のみ")
+        edits = [op for op in plan.ops if op.kind == "edit_body"]
+        self.assertFalse(edits and "目視のみ" in edits[0].body)
+
     def test_complete_from_in_progress_downgrades_to_review(self):
         plan = plan_for("complete", fields={"Status": "In Progress"}, evidence="e")
         self.assertEqual(field_ops(plan)["Status"], "Review")
@@ -122,6 +128,12 @@ class ConflictTest(unittest.TestCase):
         plan = plan_for("note", fields={"Status": "In Progress"}, issue_body=issue_body, summary="s")
         self.assertNotIn("edit_body", [op.kind for op in plan.ops])
         self.assertTrue(plan.conflicts)
+
+    def test_crlf_body_from_github_is_not_rewritten(self):
+        issue_body = body.apply(AC_BODY, {"Status": "In Progress", "Agent": "Claude", "Blockers": "None"})
+        issue_body = issue_body.replace("\n", "\r\n")
+        plan = plan_for("start", fields={"Status": "In Progress", "AI Agent": "Claude", "Priority": "P2"}, issue_body=issue_body)
+        self.assertNotIn("edit_body", [op.kind for op in plan.ops])
 
     def test_already_posted_event_is_noop(self):
         fake = FakeClient()

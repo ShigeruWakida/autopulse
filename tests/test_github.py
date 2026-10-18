@@ -1,10 +1,11 @@
 import json
+import sys
 import unittest
 
 from auto_pulse.errors import AuthError, GhError, TransientError
 from auto_pulse.github import GhClient
 from auto_pulse.redact import redact
-from auto_pulse.runner import Result, classify
+from auto_pulse.runner import Result, SubprocessRunner, classify
 
 
 class FakeRunner:
@@ -85,11 +86,33 @@ class GhClientTest(unittest.TestCase):
             GhClient(FakeRunner()).get_issue("noslash", 1, None, None)
 
 
+class SubprocessRunnerTest(unittest.TestCase):
+    def test_stdin_is_passed_byte_exact(self):
+        echo = "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"
+        result = SubprocessRunner(sys.executable).run(["-c", echo], input="a\r\nb\n日本語")
+        self.assertEqual(result.stdout, "a\r\nb\n日本語")
+
+
 class ClassifyTest(unittest.TestCase):
     def test_rate_limit_is_transient(self):
         self.assertIsInstance(classify(Result(1, "", "HTTP 403: API rate limit exceeded")), TransientError)
         self.assertIsInstance(classify(Result(1, "", "HTTP 502: Bad Gateway")), TransientError)
         self.assertIsInstance(classify(Result(1, "", "dial tcp: lookup api.github.com: no such host")), TransientError)
+
+    def test_windows_connection_refused_is_transient(self):
+        # Seen in the E2E run with an unreachable proxy; it used to be treated as permanent.
+        text = (
+            'Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connectex: '
+            "No connection could be made because the target machine actively refused it."
+        )
+        self.assertIsInstance(classify(Result(1, "", text)), TransientError)
+
+    def test_unknown_output_is_retried(self):
+        self.assertIsInstance(classify(Result(1, "", "something unexpected")), TransientError)
+
+    def test_github_answers_are_permanent(self):
+        self.assertIsInstance(classify(Result(1, "", "GraphQL: Could not resolve to an Issue with the number of 9.")), GhError)
+        self.assertIsInstance(classify(Result(1, "", "HTTP 404: Not Found")), GhError)
 
     def test_auth_problems(self):
         self.assertIsInstance(classify(Result(1, "", "To get started with GitHub CLI, please run:  gh auth login")), AuthError)

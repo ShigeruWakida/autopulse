@@ -256,9 +256,15 @@ def cmd_sync(ctx: Ctx) -> int:
         lines += [f"  {e.created_at} {e.repo}#{e.issue} {e.type} 試行{e.attempts} {e.last_error or ''}" for e in pending]
         ctx.out(lines, [{"id": e.id, "repo": e.repo, "issue": e.issue, "type": e.type, "attempts": e.attempts, "last_error": e.last_error} for e in pending])
         return ExitCode.OK
+    if a.retry_failed:
+        requeued = ctx.spool.requeue_failed()
+        if requeued and not a.json:
+            ctx.out(f"失敗イベント {len(requeued)} 件をキューに戻しました", None)
     pending = ctx.spool.pending()
     if not pending:
-        ctx.out("未送信イベントはありません", {"results": []})
+        failed = len(ctx.spool.failed_events())
+        note = f"（失敗 {failed} 件: --retry-failed で再送）" if failed else ""
+        ctx.out("未送信イベントはありません" + note, {"results": [], "failed": failed})
         return ExitCode.OK
     results = process(Engine(ctx.client, ctx.config()), ctx.spool, force=a.force)
     lines = [f"{r.event.repo}#{r.event.issue} {r.event.type}: {OUTCOME_LABELS[r.status]}" + (f" {r.error}" if r.error else "") for r in results]
@@ -325,6 +331,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("sync", parents=[common], help="キューを再送")
     s.add_argument("--force", action="store_true", help="バックオフ待ちも今すぐ送る")
     s.add_argument("--dry-run", action="store_true", help="未送信イベントを表示するだけ")
+    s.add_argument("--retry-failed", action="store_true", help="失敗扱いのイベント（queue/failed）もキューに戻して再送")
 
     for name, handler in [("doctor", cmd_doctor), ("init", cmd_init), ("status", cmd_status), ("sync", cmd_sync)]:
         sub.choices[name].set_defaults(handler=handler)

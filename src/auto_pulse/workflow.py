@@ -180,10 +180,12 @@ def build_plan(
             values["Blockers"] = event.data.get("reason", "")
         elif (target and current == "Blocked") or "Blockers" not in values:
             values["Blockers"] = "None"
-        if event.type in ("review", "complete") and event.data.get("evidence"):
+        # A downgraded complete keeps the evidence recorded by review; its own goes to the comment only.
+        if event.type in ("review", "complete") and event.data.get("evidence") and plan.outcome != "downgraded":
             values["Evidence"] = event.data["evidence"]
         new_body = managed_body.apply(snap.body, values)
-        if new_body != snap.body:
+        # CRLF vs LF alone is no change; stray "\r\r\n" from older versions does get repaired.
+        if new_body != snap.body.replace("\r\n", "\n"):
             ops.append(Op("edit_body", body=new_body, base_body=snap.body))
 
     if plan.status_after == "Done" and event.data.get("close") and snap.state == "OPEN":

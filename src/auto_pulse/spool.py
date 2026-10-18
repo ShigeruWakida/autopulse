@@ -88,6 +88,14 @@ class Spool:
             return []
         return [Event(**json.loads(p.read_text(encoding="utf-8"))) for p in sorted(self.failed.glob("*.json"))]
 
+    def requeue_failed(self) -> list[Event]:
+        events = self.failed_events()
+        for event in events:
+            event.next_attempt_at = None
+            self._write(self._path(event), event)
+            (self.failed / self._path(event).name).unlink(missing_ok=True)
+        return events
+
     def done(self, event: Event) -> None:
         self._path(event).unlink(missing_ok=True)
 

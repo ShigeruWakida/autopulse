@@ -20,7 +20,8 @@ _CHECKBOX = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.*)$")
 
 
 def _normalize(text: str) -> str:
-    return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").split("\n")).strip()
+    return "\n".join(line.rstrip() for line in re.sub(r"\r+\n", "\n", text).split("\n")).strip()
+
 
 
 def _digest(content: str) -> str:
@@ -77,7 +78,9 @@ def _one_line(text: str) -> str:
 
 
 def apply(body: str, values: dict[str, str]) -> str:
-    """Return body with the managed block replaced (or appended). Text outside is untouched."""
+    """Return body with the managed block replaced (or appended). Text outside keeps its content;
+    only line endings are normalized to LF (GitHub returns CRLF for web-edited bodies)."""
+    body = re.sub(r"\r+\n", "\n", body)
     block = render(values)
     span = _locate(body)
     if span is None:

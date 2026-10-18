@@ -28,6 +28,10 @@ class ManagedBlockTest(unittest.TestCase):
         text = body.apply("x", {"Status": "In Progress"}).replace("\n", "\r\n")
         self.assertTrue(body.parse(text).intact)
 
+    def test_doubled_carriage_returns_are_repaired(self):
+        text = body.apply("a\r\r\nb\r\n", {"Status": "Review"})
+        self.assertNotIn("\r", text)
+
     def test_broken_markers_are_not_intact(self):
         self.assertFalse(body.parse("x\n" + body.START + "\n- **Status:** Done\n").intact)
 
