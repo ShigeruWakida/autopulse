@@ -8,6 +8,7 @@ rewritten is first copied to %LOCALAPPDATA%/AutoPulse/backups/.
 import copy
 import difflib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -107,6 +108,40 @@ def merge_hooks(existing: dict, wanted: dict) -> dict:
     return merged
 
 
+def codex_user_hooks_path() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "hooks.json"
+
+
+def has_user_codex_hooks() -> bool:
+    try:
+        data = json.loads(codex_user_hooks_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(
+        HOOK_TAG in h.get("command", "") for groups in data.get("hooks", {}).values() for g in groups for h in g.get("hooks", [])
+    )
+
+
+def user_hooks_change() -> FileChange:
+    """Codex hooks for every repository on this PC (~/.codex/hooks.json)."""
+    path = codex_user_hooks_path()
+    return _json_change(path.parent, path.name, CODEX_HOOKS)
+
+
+def apply_user_hooks(change: FileChange) -> Path | None:
+    if change.action not in ("create", "merge"):
+        return None
+    target = codex_user_hooks_path()
+    backup = None
+    if target.exists():
+        backup = config_mod.home() / "backups" / "codex-user" / datetime.now().strftime("%Y%m%d-%H%M%S") / target.name
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(change.new.encode("utf-8"))
+    return backup
+
+
 def _json_change(root: Path, rel: str, wanted: dict) -> FileChange:
     old = _read(root / rel)
     if old is None:
@@ -144,8 +179,12 @@ def build(client: GhClient, cfg: Config, repo: str, root: Path, update_workflow:
         _owned_change(root, "docs/DECISIONS.md", _template("DECISIONS.md", cfg, repo), False),
         _owned_change(root, "docs/STATUS.md", _template("STATUS.md", cfg, repo), False),
         _json_change(root, ".claude/settings.json", CLAUDE_HOOKS),
-        _json_change(root, ".codex/hooks.json", CODEX_HOOKS),
     ]
+    if has_user_codex_hooks():
+        # Both layers would run; the user-level hooks already cover this repository.
+        plan.files.append(FileChange(".codex/hooks.json", "skip", reason="~/.codex/hooks.json（ユーザー設定）で導入済み"))
+    else:
+        plan.files.append(_json_change(root, ".codex/hooks.json", CODEX_HOOKS))
     for change in plan.files:
         if change.action != "skip" and _ignored(root, change.path):
             change.reason = (change.reason + "; " if change.reason else "") + ".gitignore で除外されるためコミットされません（他の PC には届きません）"

@@ -170,6 +170,25 @@ class OnboardTest(unittest.TestCase):
         self.assertIn(".gitignore", reasons[".codex/hooks.json"])
         self.assertNotIn(".gitignore", reasons[".claude/settings.json"])
 
+    def test_user_level_codex_hooks(self):
+        codex_home = Path(self.tmp.name) / "codex"
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+            codex_home.mkdir()
+            (codex_home / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "mine"}]}]}}),
+                encoding="utf-8",
+            )
+            change = onboard.user_hooks_change()
+            self.assertEqual(change.action, "merge")
+            self.assertIsNotNone(onboard.apply_user_hooks(change), "existing file is backed up")
+            data = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))
+            self.assertEqual(data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "mine")
+            self.assertIn("SessionStart", data["hooks"])
+            self.assertEqual(onboard.user_hooks_change().action, "unchanged")
+            # with user-level hooks, onboard no longer writes a repo-level copy
+            plan = onboard.build(self.fake, self.cfg, "me/repo", self.root)
+            self.assertEqual({c.path: c.action for c in plan.files}[".codex/hooks.json"], "skip")
+
     def test_invalid_json_is_left_alone(self):
         self.write(".codex/hooks.json", "{ not json")
         plan = onboard.build(self.fake, self.cfg, "me/repo", self.root)

@@ -312,6 +312,28 @@ def cmd_onboard(ctx: Ctx) -> int:
     return ExitCode.OK
 
 
+def cmd_install_hooks(ctx: Ctx) -> int:
+    a = ctx.args
+    change = onboard.user_hooks_change()
+    target = onboard.codex_user_hooks_path()
+    labels = {"create": "作成", "merge": "マージ", "unchanged": "変更なし", "skip": "変更しない"}
+    lines = [f"[{labels.get(change.action, change.action)}] {target}" + (f" — {change.reason}" if change.reason else "")]
+    data = {"path": str(target), "action": change.action, "reason": change.reason, "applied": False}
+    if not a.apply:
+        if change.new is not None:
+            lines += ["", change.diff()]
+        lines.append("（dry-run: 何も変更していません。--apply で実行）")
+        ctx.out(lines, data)
+        return ExitCode.OK
+    backup = onboard.apply_user_hooks(change)
+    if change.action in ("create", "merge"):
+        lines.append("導入しました。" + (f"バックアップ: {backup}" if backup else ""))
+        lines.append("Codex で /hooks を開き、AutoPulse の Hook を信頼してください。")
+        lines.append("リポジトリ側に .codex/hooks.json がある場合は二重に動くため削除してください。")
+    ctx.out(lines, data | {"applied": True, "backup": str(backup) if backup else None})
+    return ExitCode.OK
+
+
 def cmd_hook(ctx: Ctx) -> int:
     try:
         stdin_text = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
@@ -394,6 +416,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--update-workflow", action="store_true", help="既存の .ai/workflow.md をテンプレートで更新（バックアップあり）")
     s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
 
+    s = sub.add_parser("install-hooks", parents=[common], help="Codex の Hook をこの PC のユーザー設定に導入（既定は dry-run）")
+    s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
+    s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
+
     s = sub.add_parser("hook", parents=[common], help="Claude Code / Codex の Hook から呼ぶ（常に終了コード 0）")
     s.add_argument("event", choices=["session-start", "stop", "session-end"])
     s.add_argument("--agent", choices=["claude", "codex"])
@@ -405,6 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("sync", cmd_sync),
         ("reconcile", cmd_reconcile),
         ("onboard", cmd_onboard),
+        ("install-hooks", cmd_install_hooks),
         ("hook", cmd_hook),
     ]:
         sub.choices[name].set_defaults(handler=handler)
