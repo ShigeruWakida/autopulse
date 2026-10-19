@@ -9,10 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from auto_pulse import cli, config, records
-from auto_pulse.engine import Engine
+from auto_pulse import cli, config
 from auto_pulse.errors import ExitCode
-from auto_pulse.spool import Event, Spool
+from auto_pulse.spool import Event
 from auto_pulse.workflow import build_plan
 
 from tests.fakes import FakeClient, make_config
@@ -55,40 +54,6 @@ class AutoTransitionTest(unittest.TestCase):
             cfg.mode = "strict"
             config.save(cfg, path)
             self.assertEqual(config.load(path).mode, "strict")
-
-
-class AutoDecisionImportTest(unittest.TestCase):
-    RECORD = """# 決定記録 repo 2026-10-20
-
-## 決定
-### 言語は Flutter
-- Issue: #1、#2
-- 内容: Flutter を採用する
-
-## 新しくやること
-- なし
-
-## 未決
-- なし
-"""
-
-    def test_decision_issue_is_closed_other_issue_gets_a_note(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            fake = FakeClient()
-            fake.add_issue(1, fields={"Status": "Ready"})
-            fake.issues[("me/repo", 1)]["title"] = "[決定] アプリの実装言語"
-            fake.add_issue(2, fields={"Status": "Backlog"})
-            cfg = auto_config()
-            record = records.parse(self.RECORD)
-            plan = records.build(fake, cfg, "me/repo", root, record)
-            self.assertEqual(plan.closes, [(0, 1)])
-            records.apply(fake, cfg, plan, Spool(root / "queue"), lambda: Engine(fake, cfg))
-            url1, url2 = fake.issues[("me/repo", 1)]["url"], fake.issues[("me/repo", 2)]["url"]
-            self.assertEqual(fake.items[url1]["Status"], "Done")
-            self.assertEqual(fake.issues[("me/repo", 1)]["state"], "CLOSED")
-            self.assertEqual(fake.items[url2]["Status"], "Backlog", "a work issue is only noted")
-            self.assertEqual(len(fake.comments[("me/repo", 2)]), 1)
 
 
 class CreateCommandTest(unittest.TestCase):

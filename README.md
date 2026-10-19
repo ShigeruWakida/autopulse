@@ -171,7 +171,6 @@ autopulse reconcile --apply     # 安全な修正（ai-managed Issue の Project
 | `start` | どの Status からでも 3.作業中 にする | 1.未着手 からは不可（人が 2.着手可 にしてから） |
 | `complete` | 6.完了 にする。未チェックの完了条件・`--verified` なしなどはコメントに書き残すだけ | 完了条件がすべてチェック済み・`[human]` 項目なし・`--verified` と `--evidence` があるときだけ 6.完了、それ以外は 5.確認待ち |
 | 状態の戻し | 制限なし | 6.完了 から戻すには `--reason` が必要 |
-| `import-decisions` | 既定で反映。`[決定]`／`[Q-xx]` の Issue は決定を記録したら完了にして close | 既定は dry-run。Status は変えない |
 | 新しい作業 | AI が `autopulse create` で Issue を作る | 同左（workflow.md はユーザー確認を求める書き方に変えて使う） |
 
 どちらのモードでも、allowlist 外には書かない・人が書いた本文やコメントや Next Action を上書きしない・二重送信しない・回線断でも消えない、は同じです。
@@ -203,31 +202,6 @@ autopulse reconcile --apply     # 安全な修正（ai-managed Issue の Project
 | 4 | 方針により拒否、または（strict のとき）Done にせず Review に留めた |
 | 5 | 人の編集と競合し、現行値を保持した |
 | 6 | 設定・認証・権限の問題（`autopulse doctor` を参照） |
-
-## ChatGPT で検討しているプロジェクト
-
-ChatGPT は GitHub に書き込まず（仕様 §9）、検討で決まったことだけを「決定記録」として持ち帰ります。
-
-```powershell
-# 1. 書式を表示して、ChatGPT の Project の指示（Instructions）に貼る
-autopulse decision-template --repo ScanPilot
-
-# 2. 検討の区切りで ChatGPT が出した決定記録をファイルに保存して取り込む（auto モードではそのまま反映）
-autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot
-
-# 反映せずに内容だけ見たいとき
-autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot --dry-run
-```
-
-| 決定記録の節 | 反映先 |
-| --- | --- |
-| 決定 | `docs/DECISIONS.md` に追記。Issue 番号があればその Issue に ChatGPT の記録としてコメント（AI Agent・Last Activity も更新）。auto モードでは、`[決定]`／`[Q-xx]` の Issue を完了にして close する |
-| 新しくやること | Issue を作り、Projects に 1.未着手 で追加（同じタイトルがあれば作らない） |
-| 未決 | Issue にはしない。記録ファイルに残す |
-| 記録そのもの | `docs/records/<日付>-<ハッシュ>.md` に保存 |
-
-同じ記録を二度取り込んでも、追記・コメント・Issue は重複しません。`docs/` の変更はコミットしないので、確認してからコミットします。
-`--repo` は `owner/name` のほか、設定の owner を補って `ScanPilot` だけでも指定できます。
 
 ## 新しいリポジトリを加える手順
 

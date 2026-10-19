@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from auto_pulse import __version__, body, bootstrap, doctor, hooks, onboard, reconcile, records
+from auto_pulse import __version__, body, bootstrap, doctor, hooks, onboard, reconcile, tasks
 from auto_pulse import config as config_mod
 from auto_pulse.config import AGENTS, FIELD_SPECS
 from auto_pulse.engine import Engine, process
@@ -348,78 +348,13 @@ def _full_repo(cfg, repo: str) -> str:
     return repo if "/" in repo else f"{cfg.owner}/{repo}"
 
 
-def cmd_decision_template(ctx: Ctx) -> int:
-    a = ctx.args
-    name = (a.repo or "（プロジェクト名）").split("/")[-1]
-    text = records.template(name)
-    ctx.out(text.rstrip("\n"), {"template": text})
-    return ExitCode.OK
-
-
-def cmd_import_decisions(ctx: Ctx) -> int:
-    a = ctx.args
-    cfg = ctx.config()
-    repo = _full_repo(cfg, a.repo)
-    if not cfg.allows(repo):
-        raise PolicyRefused(f"{repo} は allowlist（config の [repos] allow）にありません。書き込みません")
-    root = Path(a.path).resolve() if a.path else Path.cwd()
-    origin = origin_of(str(root))
-    if not origin or origin.lower() != repo.lower():
-        raise PolicyRefused(f"{root} の origin（{origin}）が {repo} と一致しません。--path でクローンを指定してください")
-    text = Path(a.file).read_bytes().decode("utf-8-sig")
-    record = records.parse(text)
-    plan = records.build(ctx.client, cfg, repo, root, record)
-
-    lines = [f"{repo}: {record.title}（記録 {plan.record_path}" + ("、取り込み済み" if plan.already_imported else "") + "）"]
-    for i, d in enumerate(record.decisions):
-        new = any(i == j for j, _ in plan.new_decision_entries)
-        target = "、".join(f"#{n}" for n in d.issues) or "Issue なし"
-        closing = {n for j, n in plan.closes if j == i}
-        noted = [e.issue for e, j in zip(plan.notes, plan.note_decision) if j == i and e.issue not in closing]
-        before = [n for j, n in plan.noted_before if j == i]
-        lines.append(f"  [決定] {d.title}（{target}）: DECISIONS.md に{'追記' if new else '記録済み'}"
-                     + (f"、{'・'.join(f'#{n}' for n in noted)} に ChatGPT の記録を残す" if noted else "")
-                     + (f"、{'・'.join(f'#{n}' for n in sorted(closing))} を完了にして close" if closing else "")
-                     + (f"、{'・'.join(f'#{n}' for n in before)} はコメント済み" if before else ""))
-    for t in plan.new_tasks:
-        lines.append(f"  [新規] Issue「{t.title}」{t.priority} {t.category} 完了条件 {len(t.criteria)} 件 → {cfg.label('Backlog')}")
-    for t in plan.existing_tasks:
-        lines.append(f"  [既存] Issue「{t.title}」は同じタイトルがあるため作りません")
-    for t, refs in plan.referenced_tasks:
-        lines.append(f"  [既存参照] 「{t.title}」は {'、'.join(f'#{n}' for n in refs)} の作業なので作りません（内容の違いは Issue を手で直す）")
-    for o in record.open_items:
-        lines.append(f"  [未決] {o.title}: {o.state or '-'}（記録に残すだけで Issue は作りません）")
-    lines += [f"  注意: {w}" for w in plan.warnings]
-    data = {
-        "repo": repo,
-        "record": plan.record_path,
-        "already_imported": plan.already_imported,
-        "decisions": [{"title": d.title, "issues": d.issues, "new": any(i == j for j, _ in plan.new_decision_entries)} for i, d in enumerate(record.decisions)],
-        "referenced_tasks": [{"title": t.title, "issues": refs} for t, refs in plan.referenced_tasks],
-        "new_tasks": [t.title for t in plan.new_tasks],
-        "existing_tasks": [t.title for t in plan.existing_tasks],
-        "open": [o.title for o in record.open_items],
-        "warnings": plan.warnings,
-        "applied": False,
-    }
-    if a.dry_run or (not a.apply and cfg.mode != "auto"):
-        lines.append("（dry-run: 何も変更していません。" + ("--dry-run を外すと反映します）" if cfg.mode == "auto" else "--apply で実行）"))
-        ctx.out(lines, data)
-        return ExitCode.OK
-    created = records.apply(ctx.client, cfg, plan, ctx.spool, lambda: Engine(ctx.client, cfg))
-    lines.append(f"反映しました。作成した Issue: {', '.join(created) or 'なし'}")
-    lines.append("docs/ の変更はコミットしていません。内容を確認してコミットしてください。決定の Issue を完了にするのは人です。")
-    ctx.out(lines, data | {"applied": True, "created": created})
-    return ExitCode.OK
-
-
 def cmd_create(ctx: Ctx) -> int:
     a = ctx.args
     cfg = ctx.config()
     repo = _full_repo(cfg, a.repo or resolve_repo(a))
     if not cfg.allows(repo):
         raise PolicyRefused(f"{repo} は allowlist（config の [repos] allow）にありません。書き込みません")
-    task = records.Task(
+    task = tasks.Task(
         title=a.title,
         priority=a.priority,
         category=a.category,
@@ -428,11 +363,11 @@ def cmd_create(ctx: Ctx) -> int:
         verification=a.verification or "",
         next_action=a.next or "",
     )
-    text = records.task_body(task, note=f"AI（{AGENTS.get(a.agent or '', '不明')}）が AutoPulse で登録。")
+    text = tasks.task_body(task, note=f"AI（{AGENTS.get(a.agent or '', '不明')}）が AutoPulse で登録。")
     if a.dry_run:
         ctx.out([f"{repo}: Issue「{a.title}」を作成（dry-run）", text], {"dry_run": True, "title": a.title, "body": text})
         return ExitCode.OK
-    url, created = records.create_task_issue(ctx.client, cfg, repo, task, text)
+    url, created = tasks.create_task_issue(ctx.client, cfg, repo, task, text)
     number = int(url.rsplit("/", 1)[1])
     lines = [f"{repo}#{number}: {'作成しました' if created else '同じタイトルの Issue があるため再利用します'} {url}"]
     data = {"url": url, "number": number, "created": created}
@@ -497,7 +432,7 @@ def build_parser() -> argparse.ArgumentParser:
         s = sub.add_parser(name, parents=[common], help=help_text)
         s.add_argument("--repo", help="owner/name（省略時は git origin から推定）")
         s.add_argument("--issue", type=int, required=True)
-        s.add_argument("--agent", choices=[k for k in AGENTS if k != "mixed"], default=agent_default, required=name == "start" and not agent_default)
+        s.add_argument("--agent", choices=["claude", "codex"], default=agent_default, required=name == "start" and not agent_default)
         s.add_argument("--dry-run", action="store_true", help="GitHub を読むだけで変更しない")
         s.add_argument("--queue-only", action="store_true", help="キューに保存するだけで送信しない")
         s.add_argument("--next", help="次に取りかかれる具体的な一文")
@@ -541,19 +476,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--next", help="次に取りかかれる具体的な一文")
     s.add_argument("--priority", choices=["P0", "P1", "P2", "P3"], default="P2")
     s.add_argument("--category", choices=FIELD_SPECS["category"][2], default="Other")
-    s.add_argument("--agent", choices=[k for k in AGENTS if k != "mixed"], default=agent_default)
+    s.add_argument("--agent", choices=["claude", "codex"], default=agent_default)
     s.add_argument("--start", action="store_true", help="作成後にすぐ start する")
     s.add_argument("--dry-run", action="store_true", help="作る内容を表示するだけ")
-
-    s = sub.add_parser("decision-template", parents=[common], help="ChatGPT に渡す決定記録の書式を表示")
-    s.add_argument("--repo", help="プロジェクト名（見出しに入る）")
-
-    s = sub.add_parser("import-decisions", parents=[common], help="ChatGPT の決定記録を取り込む（既定は dry-run）")
-    s.add_argument("--repo", required=True, help="owner/name または name（owner は設定から補う）")
-    s.add_argument("--file", required=True, help="決定記録の Markdown ファイル")
-    s.add_argument("--path", help="ローカルのクローン（省略時はカレントディレクトリ）")
-    s.add_argument("--apply", action="store_true", help="反映する（auto モードでは既定で反映）")
-    s.add_argument("--dry-run", action="store_true", help="反映せず内容を表示するだけ")
 
     s = sub.add_parser("install-hooks", parents=[common], help="Codex の Hook をこの PC のユーザー設定に導入（既定は dry-run）")
     s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
@@ -572,8 +497,6 @@ def build_parser() -> argparse.ArgumentParser:
         ("onboard", cmd_onboard),
         ("install-hooks", cmd_install_hooks),
         ("create", cmd_create),
-        ("decision-template", cmd_decision_template),
-        ("import-decisions", cmd_import_decisions),
         ("hook", cmd_hook),
     ]:
         sub.choices[name].set_defaults(handler=handler)
