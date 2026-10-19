@@ -8,7 +8,7 @@ from pathlib import Path
 
 from auto_pulse import __version__, body, bootstrap, doctor, hooks, onboard, reconcile, records
 from auto_pulse import config as config_mod
-from auto_pulse.config import AGENTS
+from auto_pulse.config import AGENTS, FIELD_SPECS
 from auto_pulse.engine import Engine, process
 from auto_pulse.errors import AutoPulseError, ExitCode, PolicyRefused, TransientError
 from auto_pulse.github import GhClient, origin_of
@@ -374,10 +374,12 @@ def cmd_import_decisions(ctx: Ctx) -> int:
     for i, d in enumerate(record.decisions):
         new = any(i == j for j, _ in plan.new_decision_entries)
         target = "、".join(f"#{n}" for n in d.issues) or "Issue なし"
-        noted = [e.issue for e, j in zip(plan.notes, plan.note_decision) if j == i]
+        closing = {n for j, n in plan.closes if j == i}
+        noted = [e.issue for e, j in zip(plan.notes, plan.note_decision) if j == i and e.issue not in closing]
         before = [n for j, n in plan.noted_before if j == i]
         lines.append(f"  [決定] {d.title}（{target}）: DECISIONS.md に{'追記' if new else '記録済み'}"
                      + (f"、{'・'.join(f'#{n}' for n in noted)} に ChatGPT の記録を残す" if noted else "")
+                     + (f"、{'・'.join(f'#{n}' for n in sorted(closing))} を完了にして close" if closing else "")
                      + (f"、{'・'.join(f'#{n}' for n in before)} はコメント済み" if before else ""))
     for t in plan.new_tasks:
         lines.append(f"  [新規] Issue「{t.title}」{t.priority} {t.category} 完了条件 {len(t.criteria)} 件 → {cfg.label('Backlog')}")
@@ -400,8 +402,8 @@ def cmd_import_decisions(ctx: Ctx) -> int:
         "warnings": plan.warnings,
         "applied": False,
     }
-    if not a.apply:
-        lines.append("（dry-run: 何も変更していません。--apply で実行）")
+    if a.dry_run or (not a.apply and cfg.mode != "auto"):
+        lines.append("（dry-run: 何も変更していません。" + ("--dry-run を外すと反映します）" if cfg.mode == "auto" else "--apply で実行）"))
         ctx.out(lines, data)
         return ExitCode.OK
     created = records.apply(ctx.client, cfg, plan, ctx.spool, lambda: Engine(ctx.client, cfg))
@@ -409,6 +411,43 @@ def cmd_import_decisions(ctx: Ctx) -> int:
     lines.append("docs/ の変更はコミットしていません。内容を確認してコミットしてください。決定の Issue を完了にするのは人です。")
     ctx.out(lines, data | {"applied": True, "created": created})
     return ExitCode.OK
+
+
+def cmd_create(ctx: Ctx) -> int:
+    a = ctx.args
+    cfg = ctx.config()
+    repo = _full_repo(cfg, a.repo or resolve_repo(a))
+    if not cfg.allows(repo):
+        raise PolicyRefused(f"{repo} は allowlist（config の [repos] allow）にありません。書き込みません")
+    task = records.Task(
+        title=a.title,
+        priority=a.priority,
+        category=a.category,
+        summary=a.summary,
+        criteria=a.criteria or [],
+        verification=a.verification or "",
+        next_action=a.next or "",
+    )
+    text = records.task_body(task, note=f"AI（{AGENTS.get(a.agent or '', '不明')}）が AutoPulse で登録。")
+    if a.dry_run:
+        ctx.out([f"{repo}: Issue「{a.title}」を作成（dry-run）", text], {"dry_run": True, "title": a.title, "body": text})
+        return ExitCode.OK
+    url, created = records.create_task_issue(ctx.client, cfg, repo, task, text)
+    number = int(url.rsplit("/", 1)[1])
+    lines = [f"{repo}#{number}: {'作成しました' if created else '同じタイトルの Issue があるため再利用します'} {url}"]
+    data = {"url": url, "number": number, "created": created}
+    code = ExitCode.OK
+    if a.start:
+        event = Event(type="start", repo=repo, issue=number, agent=a.agent, data={"next": a.next} if a.next else {})
+        ctx.spool.put(event)
+        results = process(Engine(ctx.client, cfg), ctx.spool, only=(repo, number))
+        mine = next((r for r in results if r.event.id == event.id), None)
+        status = mine.status if mine else "queued"
+        lines.append(f"  start: {OUTCOME_LABELS.get(status, status)}")
+        data["start"] = status
+        code = OUTCOME_CODES.get(status, ExitCode.OK) if status != "failed" else (mine.code or ExitCode.ERROR)
+    ctx.out(lines, data)
+    return code
 
 
 def cmd_hook(ctx: Ctx) -> int:
@@ -493,6 +532,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--update-workflow", action="store_true", help="既存の .ai/workflow.md をテンプレートで更新（バックアップあり）")
     s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
 
+    s = sub.add_parser("create", parents=[common], help="Issue を作って Projects に追加（AI が自分で使う）")
+    s.add_argument("--repo", help="owner/name または name（省略時は git origin から推定）")
+    s.add_argument("--title", required=True)
+    s.add_argument("--summary", required=True, help="何をするか")
+    s.add_argument("--criteria", action="append", help="完了条件（複数可）")
+    s.add_argument("--verification", help="どう確かめるか")
+    s.add_argument("--next", help="次に取りかかれる具体的な一文")
+    s.add_argument("--priority", choices=["P0", "P1", "P2", "P3"], default="P2")
+    s.add_argument("--category", choices=FIELD_SPECS["category"][2], default="Other")
+    s.add_argument("--agent", choices=[k for k in AGENTS if k != "mixed"], default=agent_default)
+    s.add_argument("--start", action="store_true", help="作成後にすぐ start する")
+    s.add_argument("--dry-run", action="store_true", help="作る内容を表示するだけ")
+
     s = sub.add_parser("decision-template", parents=[common], help="ChatGPT に渡す決定記録の書式を表示")
     s.add_argument("--repo", help="プロジェクト名（見出しに入る）")
 
@@ -500,8 +552,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repo", required=True, help="owner/name または name（owner は設定から補う）")
     s.add_argument("--file", required=True, help="決定記録の Markdown ファイル")
     s.add_argument("--path", help="ローカルのクローン（省略時はカレントディレクトリ）")
-    s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
-    s.add_argument("--dry-run", action="store_true", help="既定の動作（明示用）")
+    s.add_argument("--apply", action="store_true", help="反映する（auto モードでは既定で反映）")
+    s.add_argument("--dry-run", action="store_true", help="反映せず内容を表示するだけ")
 
     s = sub.add_parser("install-hooks", parents=[common], help="Codex の Hook をこの PC のユーザー設定に導入（既定は dry-run）")
     s.add_argument("--apply", action="store_true", help="表示した変更を実行する")
@@ -519,6 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("reconcile", cmd_reconcile),
         ("onboard", cmd_onboard),
         ("install-hooks", cmd_install_hooks),
+        ("create", cmd_create),
         ("decision-template", cmd_decision_template),
         ("import-decisions", cmd_import_decisions),
         ("hook", cmd_hook),

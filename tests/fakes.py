@@ -20,7 +20,8 @@ unittest
 
 def make_config(**kw) -> Config:
     # Tests speak in logical status names; the label mapping has its own tests.
-    cfg = Config(owner="me", project_number=1, repos=["me/repo"], status_labels={s: s for s in STATUSES})
+    # Most rule tests exercise the strict gates; auto mode has its own tests.
+    cfg = Config(owner="me", project_number=1, repos=["me/repo"], status_labels={s: s for s in STATUSES}, mode="strict")
     for k, v in kw.items():
         setattr(cfg, k, v)
     return cfg

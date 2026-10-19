@@ -82,6 +82,8 @@ def _issue_numbers(value: str) -> list[int]:
     return [int(n) for n in re.findall(r"#?(\d+)", value)]
 
 
+# Issues that exist only to make a decision: "[決定] ..." or "[Q-31] ...".
+DECISION_ISSUE = re.compile(r"^\[(決定|Q-\d+)\]")
 _ISSUE_REF = re.compile(r"(?:Issue\s*)?#(\d+)", re.IGNORECASE)
 
 
@@ -163,17 +165,33 @@ def parse(text: str) -> Record:
     return record
 
 
-def task_body(task: Task, record: Record, record_path: str) -> str:
+def task_body(task: Task, related: str = "", note: str = "") -> str:
     parts = [
         "### Summary", task.summary, "",
-        "### Acceptance Criteria", *[f"- [ ] {c}" for c in task.criteria], "",
+        "### Acceptance Criteria", *[f"- [ ] {c}" for c in task.criteria or ["作業が終わっている"]], "",
         "### Verification", task.verification or "完了条件を確認する", "",
         "### Next Action", task.next_action or "着手方法を決める", "",
         "### Blockers", "None", "",
-        "### Related decisions", f"{record.title}（{record_path}）", "",
-        "### Notes", f"ChatGPT の決定記録（{record.date or '日付なし'}）から登録。",
     ]
+    if related:
+        parts += ["### Related decisions", related, ""]
+    parts += ["### Notes", note or "AI が AutoPulse で登録。"]
     return "\n".join(parts) + "\n"
+
+
+def create_task_issue(client: GhClient, cfg: Config, repo: str, task: Task, body_text: str, status: str = "Backlog") -> tuple[str, bool]:
+    """Create the issue (or reuse one with the same title) and put it on the Project. Returns (url, created)."""
+    existing = client.issue_titles(repo).get(task.title)
+    url = existing or client.create_issue(repo, task.title, body_text, ["ai-managed"])
+    if not existing:
+        values = {
+            "status": cfg.label(status),
+            "priority": task.priority,
+            "category": task.category,
+            "repo_name": repo.split("/")[-1],
+        }
+        client.set_fields(cfg.owner, cfg.project_number, url, {cfg.field(k): v for k, v in values.items()})
+    return url, not existing
 
 
 def decisions_entry(record: Record, index: int, decision: Decision, record_path: str) -> str:
@@ -188,6 +206,23 @@ def decisions_entry(record: Record, index: int, decision: Decision, record_path:
         lines.append("- 関連: " + "、".join(f"#{n}" for n in decision.issues))
     lines.append(f"- 出典: ChatGPT の決定記録（{record_path}）")
     return "\n".join(lines) + "\n"
+
+
+def close_event(record: Record, index: int, decision: Decision, repo: str, issue: int) -> Event:
+    """Auto mode: the decision issue is done once the decision is recorded."""
+    return Event(
+        id=str(uuid.uuid5(EVENT_NAMESPACE, f"{repo.lower()}:{record.digest}:{index}:{issue}:close")),
+        type="complete",
+        repo=repo,
+        issue=issue,
+        agent="chatgpt",
+        data={
+            "summary": f"ChatGPT で決定「{decision.title}」",
+            "evidence": decision.content + (f"（理由: {decision.reason}）" if decision.reason else ""),
+            "verified": True,
+            "close": True,
+        },
+    )
 
 
 def note_event(record: Record, index: int, decision: Decision, repo: str, issue: int) -> Event:
@@ -214,6 +249,7 @@ class ImportPlan:
     notes: list[Event] = field(default_factory=list)
     note_decision: list[int] = field(default_factory=list)  # decision index of each note
     noted_before: list[tuple[int, int]] = field(default_factory=list)  # (decision index, issue)
+    closes: list[tuple[int, int]] = field(default_factory=list)  # decision issues completed (auto mode)
     new_tasks: list[Task] = field(default_factory=list)
     existing_tasks: list[Task] = field(default_factory=list)
     referenced_tasks: list[tuple[Task, list[int]]] = field(default_factory=list)
@@ -232,11 +268,14 @@ def build(client: GhClient, cfg: Config, repo: str, root: Path, record: Record) 
             plan.new_decision_entries.append((i, decision))
         for number in decision.issues:
             try:
-                client.get_issue(repo, number, cfg.owner, cfg.project_number)
+                snap = client.get_issue(repo, number, cfg.owner, cfg.project_number)
             except AutoPulseError as exc:
                 plan.warnings.append(f"#{number} を確認できないためコメントしません: {exc}")
                 continue
-            event = note_event(record, i, decision, repo, number)
+            closing = cfg.mode == "auto" and DECISION_ISSUE.match(snap.title) and snap.state == "OPEN"
+            event = (close_event if closing else note_event)(record, i, decision, repo, number)
+            if closing:
+                plan.closes.append((i, number))
             if event.id in client.comment_event_ids(repo, number):
                 plan.noted_before.append((i, number))  # imported earlier: the comment exists
                 continue
@@ -282,10 +321,8 @@ def apply(client: GhClient, cfg: Config, plan: ImportPlan, spool, engine_factory
         process(engine_factory(), spool)
 
     created = []
-    repo_name = plan.repo.split("/")[-1]
     for task in plan.new_tasks:
-        url = client.create_issue(plan.repo, task.title, task_body(task, record, plan.record_path), ["ai-managed"])
-        values = {"status": cfg.label("Backlog"), "priority": task.priority, "category": task.category, "repo_name": repo_name}
-        client.set_fields(cfg.owner, cfg.project_number, url, {cfg.field(k): v for k, v in values.items()})
+        text = task_body(task, f"{record.title}（{plan.record_path}）", f"ChatGPT の決定記録（{record.date or '日付なし'}）から登録。")
+        url, _ = create_task_issue(client, cfg, plan.repo, task, text)
         created.append(url)
     return created

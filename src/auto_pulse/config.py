@@ -42,6 +42,8 @@ FIELD_SPECS: dict[str, tuple[str, str, list[str]]] = {
     "repo_name": ("Repo Name", "TEXT", []),  # "Repo" is a reserved field name
 }
 DEFAULT_PRIORITY = "P2"
+# auto: the AI updates freely (no human gates, gaps are only noted). strict: spec v1.1 gates.
+POLICY_MODES = ("auto", "strict")
 DEFAULT_HUMAN_APPROVAL_PATTERNS = ["[human]", "[人間承認]", "人間承認"]
 
 
@@ -69,6 +71,7 @@ class Config:
     repos: list[str] = field(default_factory=list)
     human_approval_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_HUMAN_APPROVAL_PATTERNS))
     status_labels: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_STATUS_LABELS))
+    mode: str = "auto"
     path: Path | None = None
 
     def field(self, key: str) -> str:
@@ -121,6 +124,9 @@ def load(path: Path | None = None) -> Config:
     if len(set(labels.values())) != len(labels):
         raise ConfigError("[statuses] の表示名が重複しています")
     policy = data.get("policy", {})
+    mode = policy.get("mode", "auto")
+    if mode not in POLICY_MODES:
+        raise ConfigError(f"[policy] mode は {' / '.join(POLICY_MODES)} のどれかです: {mode!r}")
     return Config(
         owner=project["owner"],
         project_number=int(project["number"]),
@@ -129,6 +135,7 @@ def load(path: Path | None = None) -> Config:
         repos=list(data.get("repos", {}).get("allow", [])),
         human_approval_patterns=list(policy.get("human_approval_patterns", DEFAULT_HUMAN_APPROVAL_PATTERNS)),
         status_labels=labels,
+        mode=mode,
         path=path,
     )
 
@@ -157,6 +164,8 @@ def dumps(cfg: Config) -> str:
         "allow = [" + ", ".join(_q(r) for r in cfg.repos) + "]",
         "",
         "[policy]",
+        "# auto: the AI updates progress freely (no human gates; gaps are noted in comments). strict: spec v1.1 gates.",
+        f"mode = {_q(cfg.mode)}",
         "# An Acceptance Criteria line containing one of these needs a human to mark Done.",
         "human_approval_patterns = [" + ", ".join(_q(p) for p in cfg.human_approval_patterns) + "]",
         "",

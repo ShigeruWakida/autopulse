@@ -58,8 +58,9 @@ def session_context(client: GhClient, cfg: Config, spool: Spool, repo: str, agen
         lines.append(f"未送信イベント {len(pending)} 件（autopulse sync）")
     flag = f" --agent {agent}" if agent else ""
     lines.append(
-        f"作業する Issue を決めたら autopulse start --repo {repo} --issue <番号>{flag} を実行し、"
-        ".ai/workflow.md の手順で進捗を記録してください。"
+        f"作業を始めたら確認せずに autopulse start --repo {repo} --issue <番号>{flag} を実行し"
+        f"（該当する Issue が無ければ autopulse create --repo {repo}{flag} --start で作る）、"
+        ".ai/workflow.md の手順で進捗を自分で記録してください。"
     )
     return "\n".join(lines)
 

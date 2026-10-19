@@ -14,7 +14,7 @@ from tests.fakes import AC_BODY, FakeClient
 
 
 def japanese_config() -> Config:
-    return Config(owner="me", project_number=1, repos=["me/repo"])  # default labels
+    return Config(owner="me", project_number=1, repos=["me/repo"], mode="strict")  # default labels
 
 
 def plan(event_type, status, **data):

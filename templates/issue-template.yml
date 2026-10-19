@@ -13,7 +13,7 @@ body:
     id: acceptance
     attributes:
       label: Acceptance Criteria
-      description: チェック可能な完了条件。人間の確認が必要な項目には先頭に [human] を付けてください（AI は完了にできません）。
+      description: チェックできる形の完了条件
       value: |
         - [ ]
     validations:

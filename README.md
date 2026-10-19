@@ -149,6 +149,8 @@ autopulse block    --repo $repo --issue 12 --agent claude --reason "評価ボー
 autopulse review   --repo $repo --issue 12 --agent claude --evidence "pytest 42 passed (commit abc1234)"
 autopulse complete --repo $repo --issue 12 --agent claude --evidence "実機で 1 時間連続受信 OK" --verified --close
 
+autopulse create   --repo $repo --title "受信バッファの溢れ対策" --summary "溢れ時に古いデータを捨てる" --criteria "連続受信で落ちない" --priority P1 --category Firmware --agent claude --start
+
 autopulse sync                  # 未送信イベントを再送（バックオフ中のものは待つ）
 autopulse sync --force          # バックオフを無視して今すぐ再送
 autopulse sync --retry-failed   # 失敗扱いのイベントもキューに戻して再送
@@ -160,20 +162,26 @@ autopulse reconcile --apply     # 安全な修正（ai-managed Issue の Project
 - 変更系コマンドはすべて `--dry-run`（GitHub を読むだけ）と `--json`（機械可読な出力）に対応します
 - `AUTOPULSE_AGENT=claude` のように環境変数を設定すると `--agent` を省略できます
 
-### 状態遷移
+### 方針（`[policy] mode`）
+
+既定は **auto** です。AI が自分の判断で進捗を更新し、人の確認を待ちません。多少の誤りは許容し、記録が止まらないことを優先します。
+
+| | auto（既定） | strict（仕様 v1.1） |
+| --- | --- | --- |
+| `start` | どの Status からでも 3.作業中 にする | 1.未着手 からは不可（人が 2.着手可 にしてから） |
+| `complete` | 6.完了 にする。未チェックの完了条件・`--verified` なしなどはコメントに書き残すだけ | 完了条件がすべてチェック済み・`[human]` 項目なし・`--verified` と `--evidence` があるときだけ 6.完了、それ以外は 5.確認待ち |
+| 状態の戻し | 制限なし | 6.完了 から戻すには `--reason` が必要 |
+| `import-decisions` | 既定で反映。`[決定]`／`[Q-xx]` の Issue は決定を記録したら完了にして close | 既定は dry-run。Status は変えない |
+| 新しい作業 | AI が `autopulse create` で Issue を作る | 同左（workflow.md はユーザー確認を求める書き方に変えて使う） |
+
+どちらのモードでも、allowlist 外には書かない・人が書いた本文やコメントや Next Action を上書きしない・二重送信しない・回線断でも消えない、は同じです。
+`config.toml` の `[policy]` に `mode = "strict"` と書くと仕様 v1.1 の厳格な動きになります。
 
 ```
-1.未着手 →(人) 2.着手可 → 3.作業中 ⇄ 4.停止中
-                             ↓
-                          5.確認待ち → 6.完了
-6.完了 → 3.作業中 / 4.停止中（--reason 必須）
+1.未着手 → 2.着手可 → 3.作業中 ⇄ 4.停止中
+                        ↓
+                     5.確認待ち → 6.完了
 ```
-
-- 1.未着手 から直接 `start` はできません（要件を確認して人が 2.着手可 にしてから）
-- `complete` が Done にするのは次をすべて満たすときだけです。満たさなければ Review に留めます（終了コード 4）
-  - `--verified` と `--evidence` がある
-  - Issue 本文の Acceptance Criteria がすべてチェック済み
-  - Acceptance Criteria に `[human]` / `人間承認` を含む項目がない（人間だけが Done にできる）
 
 ### 人間の編集との関係
 
@@ -192,7 +200,7 @@ autopulse reconcile --apply     # 安全な修正（ai-managed Issue の Project
 | 1 | 予期しないエラー / GitHub が恒久的なエラーを返した |
 | 2 | 引数の誤り |
 | 3 | GitHub に反映できずキューに保存した（`sync` で再送） |
-| 4 | 方針により拒否、または Done にせず Review に留めた |
+| 4 | 方針により拒否、または（strict のとき）Done にせず Review に留めた |
 | 5 | 人の編集と競合し、現行値を保持した |
 | 6 | 設定・認証・権限の問題（`autopulse doctor` を参照） |
 
@@ -204,16 +212,16 @@ ChatGPT は GitHub に書き込まず（仕様 §9）、検討で決まったこ
 # 1. 書式を表示して、ChatGPT の Project の指示（Instructions）に貼る
 autopulse decision-template --repo ScanPilot
 
-# 2. 検討の区切りで ChatGPT が出した決定記録をファイルに保存し、取り込む内容を確認（dry-run）
+# 2. 検討の区切りで ChatGPT が出した決定記録をファイルに保存して取り込む（auto モードではそのまま反映）
 autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot
 
-# 3. 反映する
-autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot --apply
+# 反映せずに内容だけ見たいとき
+autopulse import-decisions --repo ScanPilot --file C:\path\to\record.md --path C:\path\to\ScanPilot --dry-run
 ```
 
 | 決定記録の節 | 反映先 |
 | --- | --- |
-| 決定 | `docs/DECISIONS.md` に追記。Issue 番号があればその Issue に ChatGPT の記録としてコメント（AI Agent・Last Activity も更新）。**Status は変えない**（完了にするのは人） |
+| 決定 | `docs/DECISIONS.md` に追記。Issue 番号があればその Issue に ChatGPT の記録としてコメント（AI Agent・Last Activity も更新）。auto モードでは、`[決定]`／`[Q-xx]` の Issue を完了にして close する |
 | 新しくやること | Issue を作り、Projects に 1.未着手 で追加（同じタイトルがあれば作らない） |
 | 未決 | Issue にはしない。記録ファイルに残す |
 | 記録そのもの | `docs/records/<日付>-<ハッシュ>.md` に保存 |

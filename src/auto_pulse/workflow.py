@@ -58,6 +58,8 @@ class Plan:
 
 
 def check_transition(current: str | None, target: str, event: Event, cfg: Config | None = None) -> None:
+    if cfg is not None and cfg.mode == "auto":
+        return  # the AI may move an issue anywhere; mistakes are cheaper than friction
     name = cfg.label if cfg else (lambda s: s)
     if current is not None and current not in STATUSES:
         raise PolicyRefused(f"現在の Status {current!r} は AutoPulse の状態にありません（Projects の選択肢を確認してください）")
@@ -117,7 +119,9 @@ def build_plan(
     target = TARGET[event.type]
     if event.type == "complete":
         reasons = completion_blockers(event, snap, cfg)
-        if reasons:
+        if reasons and cfg.mode == "auto":
+            plan.notes.append("未確認の点（自動モードのため完了にしました）: " + "; ".join(reasons))
+        elif reasons:
             target = "Review"
             plan.outcome = "downgraded"
             plan.notes.append(f"{cfg.label('Done')} にせず {cfg.label('Review')} に留めました: " + "; ".join(reasons))
